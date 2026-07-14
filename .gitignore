@@ -1,0 +1,13 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+updater.key
+*.bak
+test_dl/
+test.rs
+test.txt
+ 
+updater.key
+new_key*
+token_req.txt
