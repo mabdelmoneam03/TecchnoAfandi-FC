@@ -276,11 +276,20 @@ fn main() {
             exit_app,
             activation::portable_update,
         ])
-        .setup(|_app| {
+        .setup(|app| {
             // Clean up any .exe.old left from previous updates
             if let Ok(current) = std::env::current_exe() {
                 let target_old = current.with_extension("exe.old");
                 std::fs::remove_file(&target_old).ok();
+            }
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_always_on_top(true);
+                let _ = window.set_focus();
+                let w = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    let _ = w.set_always_on_top(false);
+                });
             }
             Ok(())
         })
