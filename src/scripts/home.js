@@ -271,8 +271,14 @@ window.onload = async () => {
     seen = sessionStorage.getItem('ta_startup_seen') === '1';
   } catch (e) {}
 
-  if (!seen) {
+  if (!seen || window.location.search.includes('tour_done=1')) {
     document.getElementById('startup-modal').classList.add('active');
+  }
+
+  if (window.location.search.includes('tour_done=1')) {
+    if (typeof window.showTourDone === 'function') {
+      setTimeout(() => window.showTourDone(), 500); // Small delay to let the page render
+    }
   }
 
   // Fetch exe dir once

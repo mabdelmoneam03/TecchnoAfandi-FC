@@ -81,9 +81,11 @@ function showSuccess(customMessage) {
   document.getElementById('result-status-text').textContent = 'SYSTEM · SUCCESS';
   
   const btnIcon = document.getElementById('result-btn-icon');
-  btnIcon.className = 'ti ti-arrow-right';
+  if (btnIcon) btnIcon.className = 'ti ti-arrow-right';
   const btn = document.getElementById('result-btn');
   btn.className = 'btn-success';
+  btn.innerHTML = '<i class="ti ti-arrow-right" id="result-btn-icon" style="font-size: 15px;"></i> Return To Home';
+  btn.onclick = closeResultModal;
 
   document.getElementById('result-modal').classList.add('active');
   setActivating(false);
@@ -101,9 +103,14 @@ function showFailure(customMessage) {
   document.getElementById('result-status-text').textContent = 'SYSTEM · ERROR';
   
   const btnIcon = document.getElementById('result-btn-icon');
-  btnIcon.className = 'ti ti-refresh';
+  if (btnIcon) btnIcon.className = 'ti ti-refresh';
   const btn = document.getElementById('result-btn');
   btn.className = 'btn-fail';
+  btn.innerHTML = '<i class="ti ti-refresh" id="result-btn-icon" style="font-size: 15px;"></i> Reactivate the game';
+  btn.onclick = () => {
+    document.getElementById('result-modal').classList.remove('active');
+    if (typeof window.startActivation === 'function') window.startActivation();
+  };
 
   document.getElementById('result-modal').classList.add('active');
   setActivating(false);
@@ -319,6 +326,7 @@ window.startActivation = startActivation;
 window.togglePause = togglePause;
 window.cancelActivation = cancelActivation;
 window.openExternal = openExternal;
+window.showFailure = showFailure;
 
 // Prevent mouse back/forward navigation
 window.addEventListener('mouseup', (e) => {
@@ -335,3 +343,4 @@ window.addEventListener('mousedown', (e) => {
 });
 
 window.exitApp = async () => { try { await tauriInvoke('exit_app'); } catch(e){ window.close(); } };
+window.showSuccess = showSuccess;

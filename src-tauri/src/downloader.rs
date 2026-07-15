@@ -198,10 +198,10 @@ pub async fn download_file_stream_reqwest(
         let current_size = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
         initial_total_downloaded += current_size;
         
-        let start_byte = i as u64 * chunk_size + current_size;
+        let base_start_byte = i as u64 * chunk_size;
         let end_byte = if i == num_parts - 1 { total - 1 } else { (i as u64 + 1) * chunk_size - 1 };
 
-        if start_byte > end_byte {
+        if base_start_byte + current_size > end_byte {
             total_downloaded.fetch_add(current_size, Ordering::Relaxed);
             continue;
         }
@@ -217,7 +217,7 @@ pub async fn download_file_stream_reqwest(
         let err_clone = error_msg.clone();
         
         let task = tokio::spawn(async move {
-            if let Err(e) = download_chunk(client_clone, url_clone, start_byte, end_byte, target_file, cancel_clone, pause_clone, dl_counter).await {
+            if let Err(e) = download_chunk(client_clone, url_clone, base_start_byte, end_byte, target_file, cancel_clone, pause_clone, dl_counter).await {
                 if e != "Stopped" {
                     let mut lock = err_clone.lock().await;
                     if lock.is_none() { *lock = Some(e); }
@@ -230,7 +230,7 @@ pub async fn download_file_stream_reqwest(
 
     let _ = app.emit("activation-progress", ProgressPayload {
         percent: progress_start,
-        label: format!("{} · Resuming/Starting · {} connections", label, tasks.len()),
+        label: format!("{} · Resuming/Starting", label),
     });
 
     let start_time = Instant::now();

@@ -20,7 +20,7 @@ function buildOverlay() {
   overlay.id = 'ta-tour-overlay';
   Object.assign(overlay.style, {
     position: 'fixed', inset: '0', zIndex: '9999',
-    pointerEvents: 'none',
+    pointerEvents: 'all', // BLOCK ALL CLICKS TO PAGE
   });
 
   // SVG spotlight mask
@@ -51,7 +51,7 @@ function buildOverlay() {
     borderRadius: '14px',
     padding: '16px 18px 14px',
     maxWidth: '320px',
-    minWidth: '220px',
+    minWidth: '280px',
     boxShadow: '0 0 40px rgba(124,255,225,0.2), 0 8px 32px rgba(0,0,0,0.6)',
     fontFamily: "'Inter', sans-serif",
     color: '#F5F5F7',
@@ -79,21 +79,30 @@ function showSpotlight(el, pad = 10) {
     border.setAttribute(k, attrs[k]);
   });
 
-  // Position tooltip
-  const tt = tooltip;
-  const ttW = 280, ttH = 120;
-  let top = r.bottom + pad + 14;
-  let left = r.left + r.width / 2 - ttW / 2;
+  // Position tooltip after DOM updates from showTooltip
+  requestAnimationFrame(() => {
+    const tt = tooltip;
+    const ttW = tt.offsetWidth > 0 ? tt.offsetWidth : 280;
+    const ttH = tt.offsetHeight > 0 ? tt.offsetHeight : 160;
+    let top = r.bottom + pad + 14;
+    let left = r.left + r.width / 2 - ttW / 2;
 
-  if (top + ttH > window.innerHeight - 20) top = r.top - ttH - pad - 14;
-  if (left < 10) left = 10;
-  if (left + ttW > window.innerWidth - 10) left = window.innerWidth - ttW - 10;
+    // if placing it below overflows the window, place it above
+    if (top + ttH > window.innerHeight - 20) {
+        top = r.top - ttH - pad - 14;
+    }
+    
+    // ensure it doesn't go off screen
+    if (top < 10) top = 10;
+    if (left < 10) left = 10;
+    if (left + ttW > window.innerWidth - 10) left = window.innerWidth - ttW - 10;
 
-  tt.style.top  = top  + 'px';
-  tt.style.left = left + 'px';
+    tt.style.top  = top  + 'px';
+    tt.style.left = left + 'px';
+  });
 }
 
-function showTooltip({ ar, en, step, total, onNext, onSkip, nextLabel = 'Continue →', color = '#7CFFE1' }) {
+function showTooltip({ ar, en, step, total, onNext, onPrev, nextLabel = 'Continue →', color = '#7CFFE1' }) {
   tooltip.style.opacity = '0';
   tooltip.style.transform = 'translateY(8px)';
 
@@ -104,14 +113,35 @@ function showTooltip({ ar, en, step, total, onNext, onSkip, nextLabel = 'Continu
     </div>
     <p style="font-size:13px;line-height:1.65;margin-bottom:6px;direction:rtl;color:#F5F5F7">${ar}</p>
     <p style="font-size:10.5px;line-height:1.5;margin-bottom:14px;color:#A6A4B8;font-style:italic;direction:ltr">${en}</p>
-    <div style="display:flex;gap:8px">
-      <button id="ta-tour-next" style="flex:1;padding:9px 12px;border-radius:9px;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-size:12.5px;font-weight:600;background:linear-gradient(90deg,${color},#9B6EF3);color:#03100c;box-shadow:0 4px 14px rgba(124,255,225,0.3)">${nextLabel}</button>
-      <button id="ta-tour-skip" style="padding:9px 12px;border-radius:9px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;background:rgba(255,255,255,0.04);color:#605E70">Skip</button>
+    <div style="display:flex;gap:8px;direction:ltr">
+      <button id="ta-tour-prev" style="flex:1;padding:9px 12px;border-radius:9px;border:1px solid rgba(255,255,255,0.1);cursor:pointer;font-family:'Inter',sans-serif;font-size:12px;background:rgba(255,255,255,0.04);color:#605E70">Previous</button>
+      <button id="ta-tour-next" style="flex:2;padding:9px 12px;border-radius:9px;border:none;cursor:pointer;font-family:'Inter',sans-serif;font-size:12.5px;font-weight:600;background:linear-gradient(90deg,${color},#9B6EF3);color:#03100c;box-shadow:0 4px 14px rgba(124,255,225,0.3);white-space:nowrap">${nextLabel}</button>
     </div>
   `;
 
   document.getElementById('ta-tour-next').onclick = onNext;
-  document.getElementById('ta-tour-skip').onclick = () => { endTour(); if (onSkip) onSkip(); };
+  document.getElementById('ta-tour-prev').onclick = () => {
+    if (onPrev) {
+      onPrev();
+    } else {
+      const isHome = window.location.pathname.includes('home_page_v2');
+      if (isHome) {
+        if (step > 1) {
+          document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+          runHomeStep(step - 1);
+        }
+      } else {
+        if (step > TOTAL_HOME_STEPS + 1) {
+          document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+          runVersionStep(step - 1);
+        } else if (step === TOTAL_HOME_STEPS + 1) {
+          // Go back to home page, last step
+          sessionStorage.setItem('ta_tour_step', TOTAL_HOME_STEPS.toString());
+          window.location.href = 'home_page_v2.html';
+        }
+      }
+    }
+  };
 
   requestAnimationFrame(() => {
     tooltip.style.opacity = '1';
@@ -135,16 +165,16 @@ function scrollIntoViewAndWait(el) {
 
 // ───────────────────────── Home Page Tour Steps ─────────────
 const HOME_STEPS = [
-  // Step 1 – overview of the home page panel
+  // Step 1 – link buttons
   async function step1() {
-    const panel = document.querySelector('.app-panel');
-    await scrollIntoViewAndWait(panel);
-    showSpotlight(panel, 0);
+    const links = document.querySelector('.links');
+    await scrollIntoViewAndWait(links);
+    showSpotlight(links, 6);
     showTooltip({
-      ar: 'مرحباً! هذه هي الصفحة الرئيسية للأداة — من هنا بتتحكم في كل حاجة 🎮',
-      en: 'Welcome! This is the main home screen of the tool.',
-      step: 1, total: TOTAL_HOME_STEPS,
-      color: '#7CFFE1',
+      ar: 'دي لينكات اشهر صفحاتنا ديسكورد و FC 26 page و صفحة التواصل معانا وصفحة اليوتيوب',
+      en: 'Discord server , FC 26 page , Social links , YouTube page',
+      step: 1, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
       onNext: () => runHomeStep(2),
     });
   },
@@ -155,9 +185,9 @@ const HOME_STEPS = [
     await scrollIntoViewAndWait(modes);
     showSpotlight(modes, 6);
     showTooltip({
-      ar: 'هنا بتختار الوضع اللي هتشغل بيه اللعبة — FMM أو Live Editor. لازم تختار واحد قبل ما تكمل.',
-      en: 'Choose your activation mode here — FMM or Live Editor. One must be selected to proceed.',
-      step: 2, total: TOTAL_HOME_STEPS,
+      ar: 'خيارات تشغيل اللعبة المتاحة FMM | Live Editor',
+      en: 'Game launch options FMM | Live Editor',
+      step: 2, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#7CFFE1',
       onNext: () => runHomeStep(3),
     });
@@ -171,40 +201,160 @@ const HOME_STEPS = [
     showTooltip({
       ar: 'لما تختار الوضع، اضغط على الزر ده وهيوديك لصفحة الإصدار للتحقق من إصدار لعبتك.',
       en: 'After selecting a mode, press this button to go to the version review page.',
-      step: 3, total: TOTAL_HOME_STEPS,
+      step: 3, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#7CFFE1',
       onNext: () => runHomeStep(4),
     });
   },
 
-  // Step 4 – link buttons
+  // Step 4 – Mode Selection Required modal
   async function step4() {
-    const links = document.querySelector('.links');
-    await scrollIntoViewAndWait(links);
-    showSpotlight(links, 6);
+    const modalOverlay = document.getElementById('mode-warning-modal');
+    modalOverlay.classList.add('active'); // Show the modal
+    
+    // Wait for the modal transition to complete
+    await new Promise(r => setTimeout(r, 200));
+    
+    const modal = modalOverlay.querySelector('.modal');
+    showSpotlight(modal, 10);
     showTooltip({
-      ar: '📎 روابط السيرفر والمجتمع — فيها Discord وYouTube والسوشيال ميديا وصفحة FC 26.',
-      en: 'Quick links to the TechnoAfandi community: Discord, YouTube, Social & FC 26 page.',
-      step: 4, total: TOTAL_HOME_STEPS,
+      ar: 'اختر مود من مودات التشغيل FMM | Live Editor',
+      en: 'Please Choose game run option FMM | Live Editor',
+      step: 4, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#FFD54A',
-      onNext: () => runHomeStep(5),
+      onNext: () => {
+        modalOverlay.classList.remove('active'); // Hide it when moving to next
+        runHomeStep(5);
+      },
     });
   },
 
-  // Step 5 – requirements notice, then navigate to version page
+  // Step 5 – Game Folder Not Found modal
   async function step5() {
-    const panel = document.querySelector('.app-panel');
-    showSpotlight(panel, 0);
+    const modalOverlay = document.getElementById('error-modal');
+    modalOverlay.classList.add('active'); // Show the modal
+    
+    // Wait for the modal transition to complete
+    await new Promise(r => setTimeout(r, 200));
+    
+    const modal = modalOverlay.querySelector('.modal');
+    showSpotlight(modal, 10);
     showTooltip({
-      ar: '⚠️ متطلبات ضرورية: ①  اتصال بالإنترنت أثناء التشغيل. ② الأداة لازم تكون موجودة جوه فولدر اللعبة.',
-      en: '⚠️ Requirements: ① Active internet connection. ② Tool must be inside the game folder.',
-      step: 5, total: TOTAL_HOME_STEPS,
+      ar: 'انقل الاداة جوا فولدر اللعبة',
+      en: 'Please move the tool into the game folder',
+      step: 5, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        modalOverlay.classList.remove('active'); // Hide it when moving to next
+        runHomeStep(6);
+      },
+    });
+  },
+
+  // Step 6 – Auto Locate button in error modal
+  async function step6() {
+    const modalOverlay = document.getElementById('error-modal');
+    modalOverlay.classList.add('active'); // Show the modal
+    
+    // Wait for the modal transition to complete
+    await new Promise(r => setTimeout(r, 200));
+    
+    const btn = document.getElementById('btn-auto-locate');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'الخيار ده هيدور على فولدر اللعبة على جهازك وينقل الاداة فيه ويشغلهالك تاني',
+      en: 'it will look up for the game folder in ur device and relaunh the tool again',
+      step: 6, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        modalOverlay.classList.remove('active'); // Hide it when moving to next
+        runHomeStep(7);
+      },
+    });
+  },
+
+  // Step 7 – Manually Locate button in error modal
+  async function step7() {
+    const modalOverlay = document.getElementById('error-modal');
+    modalOverlay.classList.add('active'); // Show the modal
+    
+    // Wait for the modal transition to complete
+    await new Promise(r => setTimeout(r, 200));
+    
+    const btn = document.querySelector('.btn-manual');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'الخيار ده هيفتحلك نافذة تختار منها فولدر اللعبة وينقل الاداة فيها ويشغلها تاني',
+      en: 'it will open a window to manually select the game folder and relaunch the tool again',
+      step: 7, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        modalOverlay.classList.remove('active'); // Hide it when moving to next
+        runHomeStep(8);
+      },
+    });
+  },
+
+  // Step 8 – Update modal
+  async function step8() {
+    const modalOverlay = document.getElementById('update-modal');
+    modalOverlay.classList.add('active'); // Show the modal
+    
+    // Wait for the modal transition to complete
+    await new Promise(r => setTimeout(r, 200));
+    
+    const modal = modalOverlay.querySelector('.modal');
+    showSpotlight(modal, 10);
+    showTooltip({
+      ar: 'هتظهرلك لو في تحديث نزل للاداة',
+      en: 'it will appear when there is an update for the tool',
+      step: 8, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        runHomeStep(9);
+      },
+    });
+  },
+
+  // Step 9 – Update Now button
+  async function step9() {
+    const modalOverlay = document.getElementById('update-modal');
+    modalOverlay.classList.add('active'); // Ensure it is shown
+    
+    await new Promise(r => setTimeout(r, 100));
+    
+    const btn = document.querySelector('.btn-update');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هيحملك الاصدار الجديد بتاع الاداة ويسطبهولك ويشغلهالك',
+      en: 'it will download the newest tool version and install it then relaunch the tool',
+      step: 9, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        runHomeStep(10);
+      },
+    });
+  },
+
+  // Step 10 – Remind Me Later button
+  async function step10() {
+    const modalOverlay = document.getElementById('update-modal');
+    modalOverlay.classList.add('active'); // Ensure it is shown
+    
+    await new Promise(r => setTimeout(r, 100));
+    
+    const btn = document.querySelector('.btn-close');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هيسكبلك خطوة الابديت',
+      en: 'it will skip the update option',
+      step: 10, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#FFD54A',
       nextLabel: 'Next Page →',
       onNext: () => {
-        // Select FMM for the tour so version page loads
+        modalOverlay.classList.remove('active');
         try { sessionStorage.setItem('ta_mode', 'FMM'); sessionStorage.setItem('ta_exe_dir', '.'); } catch(_) {}
-        setStep(10); // jump to version page steps
+        setStep(11); // jump to version page steps
         window.location.href = 'version_page_v2.html';
       },
     });
@@ -213,6 +363,7 @@ const HOME_STEPS = [
 const TOTAL_HOME_STEPS = HOME_STEPS.length;
 
 function runHomeStep(n) {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
   setStep(n);
   HOME_STEPS[n - 1]?.();
 }
@@ -222,15 +373,25 @@ const VERSION_STEPS = [
   // Step 10 – version card
   async function step10() {
     const card = document.querySelector('.version-card');
-    if (!card) { runVersionStep(11); return; }
+    if (!card) { runVersionStep(12); return; }
+    
+    const vmain = document.getElementById('vmain');
+    const vsem = document.getElementById('vsem');
+    if (vmain && (vmain.innerText.includes('Loading') || vmain.innerText.includes('Unknown'))) {
+      vmain.innerText = ' 1.0.138.16746 ';
+    }
+    if (vsem && (vsem.innerText.includes('...') || vsem.innerText.includes('Unknown'))) {
+      vsem.innerText = ' 1.6.4 ';
+    }
+
     await scrollIntoViewAndWait(card);
     showSpotlight(card, 8);
     showTooltip({
-      ar: 'دي بطاقة إصدار اللعبة — بتعرضلك الإصدار اللي عندك حالياً بشكل تلقائي.',
-      en: 'This card shows the current version of your FC 26 installation, detected automatically.',
-      step: 6, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      ar: 'ده اصدار اللعبة الحالي عندك',
+      en: "it's ur game version",
+      step: TOTAL_HOME_STEPS + 1, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#7CFFE1',
-      onNext: () => runVersionStep(11),
+      onNext: () => runVersionStep(12)
     });
   },
 
@@ -240,72 +401,281 @@ const VERSION_STEPS = [
     await scrollIntoViewAndWait(btn);
     showSpotlight(btn, 6);
     showTooltip({
-      ar: '🚀 زر START ACTIVATION — اضغط عليه لبدء عملية تنزيل وتفعيل ملفات اللعبة.',
-      en: 'Press START ACTIVATION to begin downloading & activating game files.',
-      step: 7, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      ar: 'هيبدا عملية التنزيل والتفعيل',
+      en: 'it starts downloading and activation steps',
+      step: TOTAL_HOME_STEPS + 2, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#7CFFE1',
       nextLabel: 'Simulate →',
-      onNext: () => runVersionStep(12),
+      onNext: () => runVersionStep(13)
     });
   },
 
   // Step 12 – fake activation demo
   async function step12() {
     const container = document.getElementById('progress-container');
-    if (!container) { runVersionStep(13); return; }
+    if (!container) { runVersionStep(14); return; }
     container.style.display = 'block';
+    
+    // set initial status for tour step
+    const fill = document.getElementById('progress-fill');
+    const pct  = document.getElementById('progress-pct');
+    const txt  = document.getElementById('progress-text-content');
+    if(fill) fill.style.width = '42%';
+    if(pct) pct.textContent = '42%';
+    if(txt) txt.textContent = 'Downloading patch files...';
+
+    // Show action buttons so they look natural
+    const pauseBtn = document.getElementById('pause-btn');
+    const cancelBtn = document.getElementById('cancel-btn');
+    if (pauseBtn) pauseBtn.classList.add('active');
+    if (cancelBtn) cancelBtn.classList.add('active');
+
     await scrollIntoViewAndWait(container);
     showSpotlight(container, 8);
-
-    // Show the tooltip first
     showTooltip({
-      ar: '📥 هنا بيبان تقدم عملية التحميل والتفعيل — مع نسبة مئوية وحالة مباشرة.',
-      en: 'The progress console shows real-time download status, percentage, and activation steps.',
-      step: 8, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      ar: 'خطوات التحميل للملفات والتفعيل لحد ماللعبة تشتغل',
+      en: 'files downloading steps and activation till run the game',
+      step: TOTAL_HOME_STEPS + 3, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#7CFFE1',
-      nextLabel: 'Watch demo →',
-      onNext: () => runFakeActivation(container, () => runVersionStep(13)),
+      onNext: () => runVersionStep(14)
     });
   },
 
-  // Step 13 – pause / cancel buttons
+  // Step 13 – pause button
   async function step13() {
-    const row = document.querySelector('.action-row');
-    await scrollIntoViewAndWait(row);
-    showSpotlight(row, 6);
+    const btn = document.getElementById('pause-btn');
+    if (btn) btn.classList.add('active'); // ensure it's visible
+    await scrollIntoViewAndWait(btn);
+    showSpotlight(btn, 6);
     showTooltip({
-      ar: '⏸ PAUSE — بتوقف التحميل مؤقتاً. ✖ CANCEL — بتلغي العملية بالكامل.',
-      en: 'PAUSE temporarily halts the download. CANCEL stops the process entirely.',
-      step: 9, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      ar: 'هيوقف عملية التحميل لحد ماتستكملها',
+      en: 'it pauses the downloads and activation',
+      step: TOTAL_HOME_STEPS + 4, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#A855F7',
-      onNext: () => runVersionStep(14),
+      onNext: () => runVersionStep(15)
     });
   },
 
-  // Step 14 – link buttons on version page
+  // Step 14 – cancel button
   async function step14() {
+    const btn = document.getElementById('cancel-btn');
+    if (btn) btn.classList.add('active'); // ensure it's visible
+    await scrollIntoViewAndWait(btn);
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هيلغي عمليات التحميل والتفعيل الجارية',
+      en: 'it cancels downloads and activation running',
+      step: TOTAL_HOME_STEPS + 5, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#A855F7',
+      onNext: () => runVersionStep(16)
+    });
+  },
+
+  // Step 15 – cancel modal
+  async function step15() {
+    const modalOverlay = document.getElementById('cancel-modal');
+    modalOverlay.classList.add('active');
+    await new Promise(r => setTimeout(r, 200));
+    const modal = modalOverlay.querySelector('.modal');
+    showSpotlight(modal, 10);
+    showTooltip({
+      ar: 'تاكيد انك عايز تلغي التفعيل الجاري',
+      en: 'confirms u wanna to cancel activation running',
+      step: TOTAL_HOME_STEPS + 6, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => runVersionStep(17)
+    });
+  },
+
+  // Step 16 – Resume choice
+  async function step16() {
+    const modalOverlay = document.getElementById('cancel-modal');
+    modalOverlay.classList.add('active');
+    await new Promise(r => setTimeout(r, 100));
+    const choice = document.querySelector('.choice-option:nth-child(1)');
+    showSpotlight(choice, 6);
+    showTooltip({
+      ar: 'استكمال عملية التفعيل الجارية',
+      en: 'resume activation running',
+      step: TOTAL_HOME_STEPS + 7, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => runVersionStep(18)
+    });
+  },
+
+  // Step 17 – Keep files choice
+  async function step17() {
+    const modalOverlay = document.getElementById('cancel-modal');
+    modalOverlay.classList.add('active');
+    await new Promise(r => setTimeout(r, 100));
+    const choice = document.querySelector('.choice-option:nth-child(2)');
+    showSpotlight(choice, 6);
+    showTooltip({
+      ar: 'الغاء عملية التفعيل مع الاحتفاظ بالملفات ا',
+      en: 'cancel the activation with keep files',
+      step: TOTAL_HOME_STEPS + 8, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => runVersionStep(19)
+    });
+  },
+
+  // Step 18 – Delete files choice
+  async function step18() {
+    const modalOverlay = document.getElementById('cancel-modal');
+    modalOverlay.classList.add('active');
+    await new Promise(r => setTimeout(r, 100));
+    const choice = document.querySelector('.choice-option:nth-child(3)');
+    showSpotlight(choice, 6);
+    showTooltip({
+      ar: 'الغاء عملية التفعيل مع عدم الاحتفاظ بالملفات',
+      en: 'cancel the activation with no keep files',
+      step: TOTAL_HOME_STEPS + 9, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => runVersionStep(20)
+    });
+  },
+
+  // Step 19 – Sure about my choice
+  async function step19() {
+    const modalOverlay = document.getElementById('cancel-modal');
+    modalOverlay.classList.add('active');
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.querySelector('#cancel-modal .btn-cancel');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'تاكيد لاختيارك السابق',
+      en: 'confirms ur choice',
+      step: TOTAL_HOME_STEPS + 10, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FFD54A',
+      onNext: () => {
+        modalOverlay.classList.remove('active');
+        runVersionStep(21);
+      }
+    });
+  },
+
+  // Step 20 – links
+  async function step20() {
     const links = document.querySelector('.links');
     await scrollIntoViewAndWait(links);
     showSpotlight(links, 6);
     showTooltip({
-      ar: '🔗 نفس اللينكات من الصفحة الرئيسية — موجودة هنا برضو للوصول السريع أثناء التفعيل.',
+      ar: 'نفس اللينكات من الصفحة الرئيسية — موجودة هنا برضو للوصول السريع أثناء التفعيل.',
       en: 'Same community links are available here too for quick access during activation.',
-      step: 10, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      step: TOTAL_HOME_STEPS + 11, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
       color: '#FFD54A',
-      nextLabel: 'Finish Tour ✓',
-      onNext: () => {
-        endTour();
-        // Show a brief "tour done" flash
-        showTourDone();
-      },
+      onNext: () => runVersionStep(22)
     });
   },
+
+  // Step 21 – Failure popup
+  async function step21() {
+    if (typeof window.showFailure === 'function') window.showFailure();
+    await new Promise(r => setTimeout(r, 200));
+    const modal = document.querySelector('#result-modal .modal');
+    showSpotlight(modal, 10);
+    showTooltip({
+      ar: 'هتظهرلك في حالة فشل التفعيل',
+      en: 'it appears when activation fails',
+      step: TOTAL_HOME_STEPS + 12, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FF4D4D',
+      onNext: () => runVersionStep(23)
+    });
+  },
+
+  // Step 22 – Reactivate button
+  async function step22() {
+    const modalOverlay = document.getElementById('result-modal');
+    if (modalOverlay) modalOverlay.classList.add('active'); // Ensure it stays open
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.getElementById('result-btn');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هتعيد خطوات تفعيل اللعبة تاني',
+      en: 'it will retry the activation again',
+      step: TOTAL_HOME_STEPS + 13, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FF4D4D',
+      onNext: () => runVersionStep(24)
+    });
+  },
+
+  // Step 23 – Close button
+  async function step23() {
+    const modalOverlay = document.getElementById('result-modal');
+    if (modalOverlay) modalOverlay.classList.add('active'); // Ensure it stays open
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.querySelector('#result-modal .btn-close');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هيقفل الاداة',
+      en: 'it will close the tool',
+      step: TOTAL_HOME_STEPS + 14, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#FF4D4D',
+      onNext: () => {
+        if (modalOverlay) modalOverlay.classList.remove('active');
+        runVersionStep(25);
+      }
+    });
+  },
+
+  // Step 24 – Success popup
+  async function step24() {
+    if (typeof window.showSuccess === 'function') window.showSuccess();
+    await new Promise(r => setTimeout(r, 200));
+    const modal = document.querySelector('#result-modal .modal');
+    showSpotlight(modal, 10);
+    showTooltip({
+      ar: 'تم التفعيل بنجاح',
+      en: 'successfully activated',
+      step: TOTAL_HOME_STEPS + 15, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#7CFFE1',
+      onNext: () => runVersionStep(26)
+    });
+  },
+
+  // Step 25 – Return To Home button
+  async function step25() {
+    const modalOverlay = document.getElementById('result-modal');
+    if (modalOverlay) modalOverlay.classList.add('active'); // Ensure it stays open
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.getElementById('result-btn');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'العودة لصفحة الهوم',
+      en: 'return to home page',
+      step: TOTAL_HOME_STEPS + 16, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#7CFFE1',
+      onNext: () => runVersionStep(27)
+    });
+  },
+
+  // Step 26 – Close button
+  async function step26() {
+    const modalOverlay = document.getElementById('result-modal');
+    if (modalOverlay) modalOverlay.classList.add('active'); // Ensure it stays open
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.querySelector('#result-modal .btn-close');
+    showSpotlight(btn, 6);
+    showTooltip({
+      ar: 'هتقفلك الاداة',
+      en: 'closes the tool',
+      step: TOTAL_HOME_STEPS + 17, total: TOTAL_VERSION_STEPS + TOTAL_HOME_STEPS,
+      color: '#7CFFE1',
+      nextLabel: 'Finish Tour ✓',
+      onNext: () => {
+        if (modalOverlay) modalOverlay.classList.remove('active');
+        endTour();
+        window.location.href = 'home_page_v2.html?tour_done=1';
+      }
+    });
+  }
 ];
 const TOTAL_VERSION_STEPS = VERSION_STEPS.length;
 
 function runVersionStep(n) {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
   setStep(n);
-  const idx = n - 10;
+  const idx = n - TOTAL_HOME_STEPS - 1;
   VERSION_STEPS[idx]?.();
 }
 
@@ -386,11 +756,22 @@ export function resumeTourIfActive() {
 
   buildOverlay();
 
-  if (step >= 10) {
-    // We're on the version page
-    setTimeout(() => runVersionStep(step < 10 ? 10 : step >= 14 ? 14 : step), 600);
+  const isHome = window.location.pathname.includes('home_page_v2');
+  if (isHome) {
+    if (step <= TOTAL_HOME_STEPS) {
+      setTimeout(() => runHomeStep(step), 600);
+    } else {
+      // Should not be here, but if so, redirect to version page
+      window.location.href = 'version_page_v2.html';
+    }
   } else {
-    setTimeout(() => runHomeStep(step), 600);
+    if (step > TOTAL_HOME_STEPS) {
+      setTimeout(() => runVersionStep(step), 600);
+    } else {
+      // Should not be here, but if so, redirect to home page
+      window.location.href = 'home_page_v2.html';
+    }
   }
   return true;
 }
+window.showTourDone = showTourDone;
