@@ -850,10 +850,27 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         return;
     }
 
-    emit_progress(70.0, "Running activator.exe...");
+    emit_progress(70.0, "Preparing environment for activator...");
+    // Hide DLLs that might be injected by Live Editor/FMM and crash the activator
+    let conflict_dlls = ["CryptBase.dll", "version.dll", "dinput8.dll", "wininet.dll", "FCLiveEditor.DLL", "EAAC.dll"];
+    for dll in &conflict_dlls {
+        let p = game_dir.join(dll);
+        if p.exists() {
+            let _ = std::fs::rename(&p, game_dir.join(format!("{}.bak", dll)));
+        }
+    }
+
+    emit_progress(72.0, "Running activator.exe...");
     let mut activator_child = match run_hidden(&temp_path, &game_dir) {
         Ok(c) => c,
         Err(e) => {
+            // Restore DLLs on error
+            for dll in &conflict_dlls {
+                let bak = game_dir.join(format!("{}.bak", dll));
+                if bak.exists() {
+                    let _ = std::fs::rename(&bak, game_dir.join(dll));
+                }
+            }
             let _ = std::fs::remove_file(&temp_path);
             emit_done(false, &format!("Failed to run activator.exe: {}", e));
             return;
@@ -862,7 +879,17 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     // Wait for activator to fully complete (this one SHOULD exit)
     emit_progress(80.0, "Activator running — please wait...");
-    match activator_child.wait() {
+    let wait_result = activator_child.wait();
+    
+    // Restore DLLs immediately after activator finishes
+    for dll in &conflict_dlls {
+        let bak = game_dir.join(format!("{}.bak", dll));
+        if bak.exists() {
+            let _ = std::fs::rename(&bak, game_dir.join(dll));
+        }
+    }
+
+    match wait_result {
         Ok(status) => {
             if !status.success() {
                 let _ = std::fs::remove_file(&temp_path);
