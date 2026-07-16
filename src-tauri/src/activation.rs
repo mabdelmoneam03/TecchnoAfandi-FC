@@ -810,7 +810,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
             // Game is running — watch for Denuvo ticket
             emit_progress(62.0, "Game loaded — checking for Denuvo tickets...");
-            let ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 62.0).await;
+            let ticket_found = watch_for_ticket(&game_dir, 30, &cancel, &pause, &app, 62.0).await;
 
             if !ticket_found {
                 emit_progress(100.0, "Activation complete");
