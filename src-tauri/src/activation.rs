@@ -851,12 +851,22 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     }
 
     emit_progress(70.0, "Preparing environment for activator...");
+    // ⚠️ Force kill FC26.exe in case child.kill() didn't kill child processes, releasing file locks on DLLs
+    let _ = std::process::Command::new("taskkill")
+        .args(&["/F", "/IM", "FC26.exe", "/T"])
+        .creation_flags(0x08000000)
+        .status();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
     // Hide DLLs that might be injected by Live Editor/FMM and crash the activator
     let conflict_dlls = ["CryptBase.dll", "version.dll", "dinput8.dll", "wininet.dll", "FCLiveEditor.DLL", "EAAC.dll"];
     for dll in &conflict_dlls {
         let p = game_dir.join(dll);
         if p.exists() {
-            let _ = std::fs::rename(&p, game_dir.join(format!("{}.bak", dll)));
+            match std::fs::rename(&p, game_dir.join(format!("{}.bak", dll))) {
+                Ok(_) => crate::logger::log_msg(&game_dir, &format!("Successfully hid {}", dll)),
+                Err(e) => crate::logger::log_msg(&game_dir, &format!("Failed to hide {}: {}", dll, e)),
+            }
         }
     }
 
@@ -868,7 +878,10 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
             for dll in &conflict_dlls {
                 let bak = game_dir.join(format!("{}.bak", dll));
                 if bak.exists() {
-                    let _ = std::fs::rename(&bak, game_dir.join(dll));
+                    match std::fs::rename(&bak, game_dir.join(dll)) {
+                        Ok(_) => crate::logger::log_msg(&game_dir, &format!("Successfully restored {}", dll)),
+                        Err(e) => crate::logger::log_msg(&game_dir, &format!("Failed to restore {}: {}", dll, e)),
+                    }
                 }
             }
             let _ = std::fs::remove_file(&temp_path);
@@ -885,7 +898,10 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     for dll in &conflict_dlls {
         let bak = game_dir.join(format!("{}.bak", dll));
         if bak.exists() {
-            let _ = std::fs::rename(&bak, game_dir.join(dll));
+            match std::fs::rename(&bak, game_dir.join(dll)) {
+                Ok(_) => crate::logger::log_msg(&game_dir, &format!("Successfully restored {}", dll)),
+                Err(e) => crate::logger::log_msg(&game_dir, &format!("Failed to restore {}: {}", dll, e)),
+            }
         }
     }
 
