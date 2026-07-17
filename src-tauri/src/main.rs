@@ -1,4 +1,6 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use std::os::windows::process::CommandExt;
 
 mod activation;
 mod downloader;
@@ -199,9 +201,80 @@ fn is_game_folder(path: &std::path::Path) -> bool {
     dbdata.exists() && xml.exists()
 }
 
+fn check_registry_for_game() -> Option<String> {
+    let keys = [
+        r#"HKLM\SOFTWARE\EA Sports\EA SPORTS FC 26"#,
+        r#"HKLM\SOFTWARE\WOW6432Node\EA Sports\EA SPORTS FC 26"#,
+    ];
+    for key in &keys {
+        if let Ok(output) = std::process::Command::new("reg")
+            .args(&["query", key, "/v", "Install Dir"])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    if line.contains("Install Dir") && line.contains("REG_SZ") {
+                        if let Some(idx) = line.find("REG_SZ") {
+                            let path = line[idx + 6..].trim().to_string();
+                            if is_game_folder(std::path::Path::new(&path)) {
+                                return Some(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn check_common_paths() -> Option<String> {
+    let drives = (b'C'..=b'Z')
+        .map(|c| format!("{}:\\", c as char))
+        .filter(|d| std::path::Path::new(d).exists())
+        .collect::<Vec<_>>();
+
+    for drive in &drives {
+        let drive_paths = [
+            format!("{}Program Files\\EA Games\\EA SPORTS FC 26", drive),
+            format!("{}Program Files (x86)\\Origin Games\\EA SPORTS FC 26", drive),
+            format!("{}Program Files (x86)\\Steam\\steamapps\\common\\EA SPORTS FC 26", drive),
+            format!("{}Program Files\\Epic Games\\EA SPORTS FC 26", drive),
+            format!("{}EA Games\\EA SPORTS FC 26", drive),
+            format!("{}Games\\EA SPORTS FC 26", drive),
+            format!("{}SteamLibrary\\steamapps\\common\\EA SPORTS FC 26", drive),
+            format!("{}Origin Games\\EA SPORTS FC 26", drive),
+            format!("{}Epic Games\\EA SPORTS FC 26", drive),
+            format!("{}EA SPORTS FC 26", drive),
+            format!("{}FC 26", drive),
+            format!("{}FC26", drive),
+        ];
+
+        for p in &drive_paths {
+            if is_game_folder(std::path::Path::new(p)) {
+                return Some(p.to_string());
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 async fn auto_locate_game() -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(|| {
+        // 1. Try Registry (Instant)
+        if let Some(p) = check_registry_for_game() {
+            return Ok(Some(p));
+        }
+
+        // 2. Try Common Paths (Instant)
+        if let Some(p) = check_common_paths() {
+            return Ok(Some(p));
+        }
+
+        // 3. Fallback to exhaustive search (Slow)
         let drives = (b'C'..=b'Z')
             .map(|c| format!("{}:\\", c as char))
             .filter(|d| std::path::Path::new(d).exists())
@@ -213,7 +286,7 @@ async fn auto_locate_game() -> Result<Option<String>, String> {
         ];
 
         for drive in drives {
-            let mut queue = VecDeque::new();
+            let mut queue = std::collections::VecDeque::new();
             queue.push_back(std::path::PathBuf::from(drive));
 
             while let Some(current) = queue.pop_front() {
