@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+<link rel="stylesheet" href="styles/titlebar.css">
 <link rel="stylesheet" href="styles/version_page.css">
 </head>
 <body>
@@ -14,13 +15,16 @@
 <div class="desktop-bg"></div>
 <div class="particles" id="particles"></div>
 
-<div class="titlebar">
-  <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-  <span class="app-name">Techno Afandi Launcher — FC 26</span>
-</div>
+
 
 <div class="app-wrap">
 <div class="app-panel" data-tauri-drag-region>
+  <div class="top-close-zone" data-tauri-drag-region>
+    <div class="drop-close-btn" data-tauri-drag-region="false">
+      <svg viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+    </div>
+  </div>
+
   <div class="glow-edge"></div>
   <div class="circuits" aria-hidden="true">
     <svg viewBox="0 0 420 640" preserveAspectRatio="none">
@@ -270,6 +274,7 @@
     </div>
 </div>
 
+<script type="module" src="scripts/titlebar.js"></script>
 <script type="module" src="scripts/version.js"></script>
 <script type="module" src="scripts/tour.js"></script>
 </body>

@@ -1,7 +1,7 @@
 {
   "name": "techno-afandi-tool",
-  "version": "1.0.3",
-  "description": "TechnoAfandi FC Activation Tool",
+  "version": "1.0.4",
+  "description": "Techno Afandi FC26 Tool",
   "type": "module",
   "scripts": {
     "tauri": "tauri",

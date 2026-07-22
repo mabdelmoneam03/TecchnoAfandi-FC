@@ -23,9 +23,7 @@ body{display:flex;justify-content:center}
 .desktop-bg{display:none;}
 .desktop-bg::before{display:none;}
 
-.titlebar{display:none;}
-.titlebar .dot{width:10px;height:10px;border-radius:50%;background:#302e3d}
-.titlebar .app-name{margin-left:10px;opacity:.6;direction:ltr}
+
 
 .particles{display:none;}
 .particle{position:absolute;width:3px;height:3px;border-radius:50%;opacity:0;animation:floatUp 8s ease-in infinite}

@@ -101,6 +101,7 @@ pub fn map_version(v1: &str) -> &str {
         "1.0.136.57334" => "1.6.2",
         "1.0.137.49763" => "1.6.3",
         "1.0.138.16746" => "1.6.4",
+        "1.0.138.57785" => "1.6.5",
         _ => "Unknown",
     }
 }
@@ -831,32 +832,25 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     // Step 8: Run bundled activator.exe — WAIT for it to finish
     let activator_bytes = app.state::<Vec<u8>>();
+    
+    // ⚠️ CRITICAL FIX: The activator MUST be in the game directory to find FC26.exe!
+    let activator_path = game_dir.join("TA_Activator.exe");
 
-    let temp_activator = match tempfile::Builder::new()
-        .prefix("activator")
-        .suffix(".exe")
-        .tempfile()
-    {
-        Ok(f) => f,
-        Err(e) => {
-            emit_done(false, &format!("Failed to create temp file: {}", e));
-            return;
-        }
-    };
-    let temp_path = temp_activator.into_temp_path();
-
-    if let Err(e) = std::fs::write(&temp_path, &*activator_bytes) {
-        emit_done(false, &format!("Failed to write activator.exe: {}", e));
+    if let Err(e) = std::fs::write(&activator_path, &*activator_bytes) {
+        emit_done(false, &format!("Failed to write activator.exe to game folder: {}", e));
         return;
     }
 
     emit_progress(70.0, "Preparing environment for activator...");
-    // ⚠️ Force kill FC26.exe in case child.kill() didn't kill child processes, releasing file locks on DLLs
-    let _ = std::process::Command::new("taskkill")
-        .args(&["/F", "/IM", "FC26.exe", "/T"])
-        .creation_flags(0x08000000)
-        .status();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // ⚠️ Force kill FC26.exe and Live Editor processes to release file locks on DLLs
+    let processes_to_kill = ["FC26.exe", "LiveEditor.exe", "FCLiveEditor.exe", "Launcher.exe", "EAAC.exe"];
+    for proc in &processes_to_kill {
+        let _ = std::process::Command::new("taskkill")
+            .args(&["/F", "/IM", proc, "/T"])
+            .creation_flags(0x08000000)
+            .status();
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     // Hide DLLs that might be injected by Live Editor/FMM and crash the activator
     let conflict_dlls = ["CryptBase.dll", "version.dll", "dinput8.dll", "wininet.dll", "FCLiveEditor.DLL", "EAAC.dll"];
@@ -871,7 +865,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     }
 
     emit_progress(72.0, "Running activator.exe...");
-    let mut activator_child = match run_hidden(&temp_path, &game_dir) {
+    let mut activator_child = match run_hidden(&activator_path, &game_dir) {
         Ok(c) => c,
         Err(e) => {
             // Restore DLLs on error
@@ -884,7 +878,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
                     }
                 }
             }
-            let _ = std::fs::remove_file(&temp_path);
+            let _ = std::fs::remove_file(&activator_path);
             emit_done(false, &format!("Failed to run activator.exe: {}", e));
             return;
         }
@@ -894,7 +888,25 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     emit_progress(80.0, "Activator running — please wait...");
     let wait_result = activator_child.wait();
     
-    // Restore DLLs immediately after activator finishes
+    // ⚠️ CRITICAL: The activator might spawn FC26.exe and exit immediately.
+    // We MUST wait for FC26.exe to close before restoring the Live Editor DLLs,
+    // otherwise the background FC26.exe will load them and crash!
+    emit_progress(85.0, "Waiting for background activation to finish...");
+    for _ in 0..120 { // wait up to 120 seconds
+        let output = std::process::Command::new("tasklist")
+            .args(&["/FI", "IMAGENAME eq FC26.exe"])
+            .creation_flags(0x08000000)
+            .output();
+        if let Ok(out) = output {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if !stdout.contains("FC26.exe") {
+                break;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    // Restore DLLs immediately after activator and background processes finish
     for dll in &conflict_dlls {
         let bak = game_dir.join(format!("{}.bak", dll));
         if bak.exists() {
@@ -908,18 +920,18 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     match wait_result {
         Ok(status) => {
             if !status.success() {
-                let _ = std::fs::remove_file(&temp_path);
+                let _ = std::fs::remove_file(&activator_path);
                 emit_done(false, &format!("Activator failed (exit code: {:?})", status.code()));
                 return;
             }
         }
         Err(e) => {
-            let _ = std::fs::remove_file(&temp_path);
+            let _ = std::fs::remove_file(&activator_path);
             emit_done(false, &format!("Failed waiting for activator: {}", e));
             return;
         }
     }
-    let _ = std::fs::remove_file(&temp_path);
+    let _ = std::fs::remove_file(&activator_path);
     emit_progress(90.0, "Activator finished");
 
     // Clean old tickets before re-running FC26
