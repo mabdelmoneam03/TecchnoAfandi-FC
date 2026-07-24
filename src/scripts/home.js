@@ -23,7 +23,7 @@ let pendingUpdate = null;
 async function checkForUpdate() {
   if (!TAURI) return null;
   try {
-    const { check } = await TAURI.updater;
+    const { check } = TAURI.updater;
     const update = await check();
     return update;
   } catch (e) {
@@ -347,7 +347,25 @@ async function handleFoundGameFolder(folderPath) {
   if (statusEl) {
     statusEl.style.display = 'block';
     statusEl.style.color = '#32cd32';
-    statusEl.innerText = 'Found New Location. Relocating...';
+    statusEl.innerText = 'Found New Location. Waiting for confirmation...';
+  }
+  
+  const confirmMsg = "تم العثور على مجلد اللعبة في المسار التالي:\n" + folderPath + "\n\nهل تريد نقل الأداة إلى هناك وإعادة التشغيل؟\n(موصى به لكي تعمل الأداة بشكل صحيح)";
+  
+  let confirmed = false;
+  try {
+      confirmed = await tauriInvoke('plugin:dialog|ask', { message: confirmMsg, title: 'تأكيد النقل', type: 'info' });
+  } catch (e) {
+      confirmed = confirm(confirmMsg);
+  }
+
+  if (!confirmed) {
+      if (statusEl) statusEl.style.display = 'none';
+      return;
+  }
+  
+  if (statusEl) {
+      statusEl.innerText = 'Relocating...';
   }
   
   const targetExe = folderPath + '\\TechnoAfandi-FC.exe';

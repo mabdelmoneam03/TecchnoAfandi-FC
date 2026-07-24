@@ -153,6 +153,18 @@ fn clean_temp_files() {
             }
         }
     }
+    // Also clean up any .bak DLLs left in the game folder if possible
+    if let Ok(exe_dir) = get_exe_dir() {
+        if let Ok(entries) = std::fs::read_dir(exe_dir) {
+            for entry in entries.flatten() {
+                if let Some(n) = entry.file_name().to_str() {
+                    if n.ends_with(".dll.bak") {
+                        let _ = std::fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -197,8 +209,8 @@ fn copy_and_relaunch(target_path: String) -> Result<(), String> {
 
 fn is_game_folder(path: &std::path::Path) -> bool {
     let dbdata = path.join("dbdata.dll");
-    let xml = path.join("__Installer").join("installerdata.xml");
-    dbdata.exists() && xml.exists()
+    let xml_exists = activation::find_installer_xml(path).is_some();
+    dbdata.exists() && xml_exists
 }
 
 fn check_registry_for_game() -> Option<String> {
@@ -227,6 +239,29 @@ fn check_registry_for_game() -> Option<String> {
             }
         }
     }
+    
+    // Check Steam Registry
+    if let Ok(output) = std::process::Command::new("reg")
+        .args(&["query", r#"HKLM\SOFTWARE\WOW6432Node\Valve\Steam"#, "/v", "InstallPath"])
+        .creation_flags(0x08000000)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("InstallPath") && line.contains("REG_SZ") {
+                    if let Some(idx) = line.find("REG_SZ") {
+                        let steam_path = line[idx + 6..].trim();
+                        let fc26_path = format!("{}\\steamapps\\common\\EA SPORTS FC 26", steam_path);
+                        if is_game_folder(std::path::Path::new(&fc26_path)) {
+                            return Some(fc26_path);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     None
 }
 
@@ -287,12 +322,15 @@ async fn auto_locate_game() -> Result<Option<String>, String> {
 
         for drive in drives {
             let mut queue = std::collections::VecDeque::new();
-            queue.push_back(std::path::PathBuf::from(drive));
+            queue.push_back((std::path::PathBuf::from(drive), 0)); // Store path and depth
 
-            while let Some(current) = queue.pop_front() {
+            while let Some((current, depth)) = queue.pop_front() {
                 if is_game_folder(&current) {
                     return Ok(Some(current.to_string_lossy().to_string()));
                 }
+                
+                // Max depth of 5 to prevent infinite/excessive scanning
+                if depth >= 5 { continue; }
 
                 if let Ok(entries) = std::fs::read_dir(&current) {
                     for entry in entries.flatten() {
@@ -309,7 +347,7 @@ async fn auto_locate_game() -> Result<Option<String>, String> {
                                     }
                                 }
                                 if !skip {
-                                    queue.push_back(entry.path());
+                                    queue.push_back((entry.path(), depth + 1));
                                 }
                             }
                         }

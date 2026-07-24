@@ -139,7 +139,6 @@ pub async fn download_file_stream_reqwest(
         
         while let Some(chunk) = resp.chunk().await.map_err(|e| (e.to_string(), accumulated_time + start_time.elapsed().as_secs()))? {
             if pause.load(Ordering::Relaxed) {
-                let _ = tokio::fs::remove_file(dest).await;
                 while pause.load(Ordering::Relaxed) {
                     if cancel.load(Ordering::Relaxed) {
                         return Err(("Cancelled".to_string(), accumulated_time + start_time.elapsed().as_secs()));
@@ -293,8 +292,10 @@ pub async fn download_file_stream_reqwest(
                 break;
             }
         }
-        
-        if all_done { break; }
+        if all_done { 
+            if pause.load(Ordering::Relaxed) { continue; }
+            break; 
+        }
     }
 
     let current_elapsed = start_time.elapsed().as_secs();

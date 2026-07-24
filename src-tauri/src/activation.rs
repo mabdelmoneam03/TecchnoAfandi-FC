@@ -126,9 +126,14 @@ fn is_lfs_pointer(path: &Path) -> bool {
 /// SHA-256 hash of a file — for duplicate detection
 fn sha256_file(path: &Path) -> Result<String, String> {
     use sha2::{Sha256, Digest};
-    let content = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut hasher = Sha256::new();
-    hasher.update(&content);
+    let mut buffer = [0; 65536];
+    loop {
+        let n = std::io::Read::read(&mut file, &mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
     let result = hasher.finalize();
     Ok(format!("{:x}", result))
 }
@@ -422,9 +427,14 @@ fn validate_zip(path: &Path) -> Result<(), String> {
 
 fn sha1_file(path: &Path) -> Result<String, String> {
     use sha1::{Sha1, Digest};
-    let content = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut hasher = Sha1::new();
-    hasher.update(&content);
+    let mut buffer = [0; 65536];
+    loop {
+        let n = std::io::Read::read(&mut file, &mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
     let result = hasher.finalize();
     Ok(format!("{:x}", result))
 }
@@ -445,7 +455,6 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
             std::io::copy(&mut entry, &mut outfile).map_err(|e| e.to_string())?;
         }
     }
-    std::fs::remove_file(zip_path).ok();
     Ok(())
 }
 
@@ -502,6 +511,10 @@ async fn watch_for_ticket(
             for _ in 0..(timeout_secs * 5) {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 if check_ticket_files(game_dir) { return true; }
+                while _pause.load(std::sync::atomic::Ordering::Relaxed) {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) { return false; }
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) { return false; }
             }
             return false;
@@ -513,6 +526,10 @@ async fn watch_for_ticket(
         for _ in 0..(timeout_secs * 5) {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             if check_ticket_files(game_dir) { return true; }
+            while _pause.load(std::sync::atomic::Ordering::Relaxed) {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) { return false; }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
             if cancel.load(std::sync::atomic::Ordering::Relaxed) { return false; }
         }
         return false;
@@ -593,7 +610,7 @@ fn generate_anadius_cfg(game_dir: &Path, version: &str, selection: &str) -> Resu
     }}
     "User"
     {{
-        "Username"              "3LAA_RA'FAT"
+        "Username"              "TechnoAfandi"
     }}
     "Achievements"
     {{
@@ -945,7 +962,26 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     // Wait for activator to fully complete (this one SHOULD exit)
     emit_progress(80.0, "Activator running — please wait...");
-    let wait_result = activator_child.wait();
+    let mut activator_success = false;
+    let mut exit_code = None;
+    for _ in 0..300 { // wait up to 5 mins
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = activator_child.kill();
+            break;
+        }
+        match activator_child.try_wait() {
+            Ok(Some(status)) => {
+                activator_success = status.success();
+                exit_code = status.code();
+                break;
+            }
+            Ok(None) => tokio::time::sleep(std::time::Duration::from_millis(1000)).await,
+            Err(e) => {
+                crate::logger::log_msg(&game_dir, &format!("Activator wait error: {}", e));
+                break;
+            }
+        }
+    }
     
     // ⚠️ CRITICAL: The activator might spawn FC26.exe and exit immediately.
     // We MUST wait for FC26.exe to close before restoring the Live Editor DLLs,
@@ -981,19 +1017,15 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         }
     }
 
-    match wait_result {
-        Ok(status) => {
-            if !status.success() {
-                let _ = std::fs::remove_file(&activator_path);
-                emit_done(false, &format!("Activator failed (exit code: {:?})", status.code()));
-                return;
-            }
-        }
-        Err(e) => {
-            let _ = std::fs::remove_file(&activator_path);
-            emit_done(false, &format!("Failed waiting for activator: {}", e));
-            return;
-        }
+    if exit_code.is_none() {
+        let _ = activator_child.kill();
+        let _ = std::fs::remove_file(&activator_path);
+        emit_done(false, "Activator did not complete within 5 minutes or was cancelled.");
+        return;
+    } else if !activator_success {
+        let _ = std::fs::remove_file(&activator_path);
+        emit_done(false, &format!("Activator failed (exit code: {:?})", exit_code));
+        return;
     }
     let _ = std::fs::remove_file(&activator_path);
     emit_progress(90.0, "Activator finished");
@@ -1028,18 +1060,26 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
             if started {
                 emit_progress(94.0, "Game re-loaded — verifying Denuvo ticket creation...");
-                // ✅ FIX: Increased timeout from 3s → 10s for slow machines
-                let ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 94.0).await;
+                // Wait for potential ticket creation or game exit
+                let _ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 94.0).await;
 
-                if !ticket_found {
-                    emit_progress(100.0, "Activation complete");
-                    // ✅ Only delete the log on genuine verified success
-                    let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
-                    emit_done(true, "تم التفعيل بنجاح! 🎮\nEA SPORTS FC 26 activated successfully. Enjoy the game!");
-                } else {
-                    // Ticket still present after activator ran = activation truly failed
-                    crate::logger::log_msg(&game_dir, "ERROR: Denuvo ticket still present after activation — activator may have failed.");
-                    emit_done(false, "فشل التفعيل — لا يزال ملف الـ Denuvo ticket موجوداً بعد تشغيل الـ activator\nActivation Failed: Denuvo ticket still present. Try running the tool as Administrator.");
+                // After waiting, if FC26 is still running, it's successful!
+                match child2.try_wait() {
+                    Ok(None) => {
+                        // Still running = Success
+                        emit_progress(100.0, "Activation complete");
+                        let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
+                        emit_done(true, "تم التفعيل بنجاح! 🎮\nEA SPORTS FC 26 activated successfully. Enjoy the game!");
+                        let _ = child2.kill();
+                        let _ = child2.wait();
+                    }
+                    Ok(Some(status)) => {
+                        crate::logger::log_msg(&game_dir, &format!("ERROR: FC26.exe exited unexpectedly (code: {:?}) after activator.", status.code()));
+                        emit_done(false, "فشل التفعيل — اللعبة توقفت فجأة بعد التشغيل\nActivation Failed: FC26.exe exited unexpectedly. Try running the tool as Administrator.");
+                    }
+                    Err(e) => {
+                        emit_done(false, &format!("Could not verify if FC26.exe is running: {}", e));
+                    }
                 }
             } else {
                 emit_done(false, "FC26.exe did not start on re-run");
@@ -1090,6 +1130,16 @@ pub async fn portable_update(app: tauri::AppHandle, version: String) -> Result<(
         })).unwrap_or(());
     }
     
+    app.emit("update-download-progress", serde_json::json!({
+        "percent": 100.0,
+        "label": "Verifying update..."
+    })).unwrap_or(());
+
+    if let Err(e) = validate_exe(&new_exe) {
+        let _ = tokio::fs::remove_file(&new_exe).await;
+        return Err(format!("Downloaded update is invalid or corrupted: {}", e));
+    }
+
     app.emit("update-download-progress", serde_json::json!({
         "percent": 100.0,
         "label": "Installing update... Restarting app"

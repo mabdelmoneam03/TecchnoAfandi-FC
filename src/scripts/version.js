@@ -324,8 +324,8 @@ window.onload = async () => {
     }
   } else {
     // Browser fallback demo values
-    document.getElementById('vmain').textContent = "1.0.136.44486";
-    document.getElementById('vsem').textContent = "1.6.1";
+    document.getElementById('vmain').textContent = "1.0.138.57785";
+    document.getElementById('vsem').textContent = "1.6.5";
   }
 };
 
