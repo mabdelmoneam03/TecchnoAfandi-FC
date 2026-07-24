@@ -465,6 +465,12 @@ fn run_hidden(exe_path: &Path, cwd: &Path) -> std::io::Result<std::process::Chil
         .spawn()
 }
 
+fn run_visible(exe_path: &Path, cwd: &Path) -> std::io::Result<std::process::Child> {
+    Command::new(exe_path)
+        .current_dir(cwd)
+        .spawn()
+}
+
 fn check_ticket_files(dir: &Path) -> bool {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -1045,8 +1051,8 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     }
 
     // Step 9: Re-run FC26.exe — verify activation worked
-    emit_progress(92.0, "Re-running FC26.exe — verifying...");
-    match run_hidden(&fc26_path, &game_dir) {
+    emit_progress(92.0, "Launching FC26.exe...");
+    match run_visible(&fc26_path, &game_dir) {
         Ok(mut child2) => {
             // Confirm game started
             let mut started = false;
@@ -1069,9 +1075,8 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
                         // Still running = Success
                         emit_progress(100.0, "Activation complete");
                         let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
-                        emit_done(true, "تم التفعيل بنجاح! 🎮\nEA SPORTS FC 26 activated successfully. Enjoy the game!");
-                        let _ = child2.kill();
-                        let _ = child2.wait();
+                        emit_done(true, "تم التفعيل بنجاح واللعبة تعمل الآن! 🎮\nEA SPORTS FC 26 activated successfully and is running. Enjoy the game!");
+                        // DO NOT kill child2 here! Let the user play the game!
                     }
                     Ok(Some(status)) => {
                         crate::logger::log_msg(&game_dir, &format!("ERROR: FC26.exe exited unexpectedly (code: {:?}) after activator.", status.code()));
