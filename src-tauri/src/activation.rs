@@ -693,6 +693,13 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     emit_progress(0.0, "Starting downloads...");
 
+    // ✅ Ensure FAKE directory exists before downloading to it
+    if let Err(e) = std::fs::create_dir_all(game_dir.join("FAKE")) {
+        crate::logger::log_msg(&game_dir, &format!("ERROR: Failed to create FAKE dir: {}", e));
+        emit_done(false, &format!("Failed to create FAKE directory: {}\nتأكد من صلاحيات الكتابة على مجلد اللعبة", e));
+        return;
+    }
+
     // Step 1: Activation64.dll (0-5%)
     let dest = game_dir.join("FAKE/Activation64.dll");
     crate::logger::log_msg(&game_dir, "Starting download: Activation64.dll");
@@ -767,6 +774,22 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         .and_then(|p| std::fs::read_to_string(p).ok())
         .unwrap_or_default();
     let version = parse_game_version(&xml_content).unwrap_or_else(|| "Unknown".to_string());
+
+    // ✅ FIX: Fail early if version could not be parsed — Unknown breaks anadius.cfg
+    if version == "Unknown" {
+        crate::logger::log_msg(&game_dir, "ERROR: Failed to parse game version from installerdata.xml");
+        emit_done(false, "فشل قراءة إصدار اللعبة من installerdata.xml\nFailed to read game version. Make sure the game is properly installed and the installer XML exists.");
+        return;
+    }
+    crate::logger::log_msg(&game_dir, &format!("Game version detected: {}", version));
+
+    // ✅ FIX: Fail early if dbdata.dll missing — sha1_file will crash silently otherwise
+    if !game_dir.join("dbdata.dll").exists() {
+        crate::logger::log_msg(&game_dir, "ERROR: dbdata.dll not found in game directory");
+        emit_done(false, "ملف dbdata.dll غير موجود في مجلد اللعبة\ndbdata.dll not found. Please verify the game installation is complete.");
+        return;
+    }
+
     emit_progress(50.0, "Generating anadius.cfg");
     if let Err(e) = generate_anadius_cfg(&game_dir, &version, &selection) {
         emit_done(false, &format!("Failed to create anadius.cfg: {}", e));
@@ -794,7 +817,15 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
                         break;
                     }
                     Ok(Some(status)) => {
-                        emit_done(false, &format!("FC26.exe exited immediately (code: {:?})", status.code()));
+                        // ✅ FIX: FC26.exe may exit fast but still drop a ticket — check before failing
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        if check_ticket_files(&game_dir) {
+                            crate::logger::log_msg(&game_dir, &format!("FC26.exe exited quickly (code: {:?}) but ticket was found — continuing.", status.code()));
+                            game_started = true;
+                            break;
+                        }
+                        crate::logger::log_msg(&game_dir, &format!("FC26.exe exited immediately (code: {:?}) with no ticket.", status.code()));
+                        emit_done(false, &format!("FC26.exe exited immediately (code: {:?}).\nتحقق من الأنتي فايروس أو نزّل اللعبة من جديد.", status.code()));
                         return;
                     }
                     Err(e) => {
@@ -934,6 +965,9 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     let _ = std::fs::remove_file(&activator_path);
     emit_progress(90.0, "Activator finished");
 
+    // ✅ FIX: Give the OS time to fully release file handles before re-running FC26.exe
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
     // Clean old tickets before re-running FC26
     if let Ok(entries) = std::fs::read_dir(&game_dir) {
         for entry in entries.flatten() {
@@ -961,14 +995,18 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
             if started {
                 emit_progress(94.0, "Game re-loaded — verifying Denuvo ticket creation...");
-                let ticket_found = watch_for_ticket(&game_dir, 3, &cancel, &pause, &app, 94.0).await;
+                // ✅ FIX: Increased timeout from 3s → 10s for slow machines
+                let ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 94.0).await;
 
                 if !ticket_found {
                     emit_progress(100.0, "Activation complete");
+                    // ✅ Only delete the log on genuine verified success
                     let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
-                    emit_done(true, "EA SPORTS FC 26 has successfully activated enjoy the game and feel free to ask about anythinh");
+                    emit_done(true, "تم التفعيل بنجاح! 🎮\nEA SPORTS FC 26 activated successfully. Enjoy the game!");
                 } else {
-                    emit_done(false, "فشل التفعيل - Activation Failed\nTicket files still present after activation");
+                    // Ticket still present after activator ran = activation truly failed
+                    crate::logger::log_msg(&game_dir, "ERROR: Denuvo ticket still present after activation — activator may have failed.");
+                    emit_done(false, "فشل التفعيل — لا يزال ملف الـ Denuvo ticket موجوداً بعد تشغيل الـ activator\nActivation Failed: Denuvo ticket still present. Try running the tool as Administrator.");
                 }
             } else {
                 emit_done(false, "FC26.exe did not start on re-run");
