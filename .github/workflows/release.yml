@@ -25,7 +25,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      # ✅ Cache Rust dependencies — saves 5-10 minutes per build
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -34,23 +33,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      # ✅ Strip newlines from the b64 key and write it as a clean file
-      # Tauri reads the file → sees b64 string → decodes → raw key ✓
-      - name: Prepare signing key file
-        shell: pwsh
-        run: |
-          $keyB64 = "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
-          $keyB64 = ($keyB64 -split '\r?\n' | Where-Object { $_ -ne '' }) -join ''
-          $keyPath = Join-Path $env:RUNNER_TEMP "tauri_signing.key"
-          [System.IO.File]::WriteAllText($keyPath, $keyB64)
-          "TAURI_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_KEY_PATH }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'TechnoAfandi - FC ${{ github.ref_name }}'
