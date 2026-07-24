@@ -740,6 +740,12 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         emit_done(false, &format!("Failed to download anadius64.dll: {}", e));
         return;
     }
+    // ✅ Validate anadius64.dll is a real PE binary (MZ header check) — catches Git LFS pointer leaks
+    if let Err(e) = validate_exe(&dest) {
+        crate::logger::log_msg(&game_dir, &format!("ERROR: anadius64.dll invalid PE: {}", e));
+        emit_done(false, &format!("anadius64.dll is corrupted or invalid: {}\nاحذف المجلد FAKE وأعد التشغيل.", e));
+        return;
+    }
 
     // Step 5: Selected package ZIP (35-45%)
     // Download to TEMP folder so ZIP never appears in game directory
@@ -840,20 +846,41 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
                 return;
             }
 
-            // Game is running — watch for Denuvo ticket
+            // Game is running — watch for Denuvo ticket (30s)
             emit_progress(62.0, "Game loaded — checking for Denuvo tickets...");
             let ticket_found = watch_for_ticket(&game_dir, 30, &cancel, &pause, &app, 62.0).await;
 
             if !ticket_found {
-                emit_progress(100.0, "Activation complete");
-                emit_done(true, "EA SPORTS FC 26 has successfully activated enjoy the game and feel free to ask about anythinh");
-                return;
+                // No Denuvo ticket after 30s — distinguish between two cases:
+                //  • FC26 still running → loaded without a Denuvo challenge → already activated
+                //  • FC26 exited        → AV killed it before it could make the ticket → try activator anyway
+                match child.try_wait() {
+                    Ok(None) => {
+                        // ✅ Game still running without a ticket = already activated / Denuvo offline
+                        crate::logger::log_msg(&game_dir, "FC26.exe running 30s with no ticket — game already activated. Skipping activator.");
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
+                        emit_progress(100.0, "Activation complete");
+                        emit_done(true, "تم التفعيل بنجاح! 🎮\nEA SPORTS FC 26 is already activated. Enjoy the game!");
+                        return;
+                    }
+                    Ok(Some(status)) => {
+                        // FC26 exited without creating a ticket — AV may have blocked it
+                        // Attempt the activator as a recovery step instead of failing
+                        crate::logger::log_msg(&game_dir, &format!("FC26.exe exited (code: {:?}) without ticket — attempting activator as recovery.", status.code()));
+                    }
+                    Err(e) => {
+                        crate::logger::log_msg(&game_dir, &format!("Could not query FC26 status: {} — attempting activator anyway.", e));
+                    }
+                }
+            } else {
+                // Ticket found — kill FC26 cleanly and proceed to activator
+                emit_progress(65.0, "Denuvo ticket detected — closing game...");
+                let _ = child.kill();
+                let _ = child.wait();
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
-
-            emit_progress(65.0, "Denuvo ticket detected — closing game...");
-            let _ = child.kill();
-            let _ = child.wait();
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         Err(e) => {
             emit_done(false, &format!("Failed to run FC26.exe: {}", e));
@@ -884,7 +911,8 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     // Hide DLLs that might be injected by Live Editor/FMM and crash the activator
-    let conflict_dlls = ["CryptBase.dll", "version.dll", "dinput8.dll", "wininet.dll", "FCLiveEditor.DLL", "EAAC.dll"];
+    // NOTE: wininet.dll intentionally excluded — it may be a required proxy DLL for the activation fix itself
+    let conflict_dlls = ["CryptBase.dll", "version.dll", "dinput8.dll", "FCLiveEditor.DLL", "EAAC.dll"];
     for dll in &conflict_dlls {
         let p = game_dir.join(dll);
         if p.exists() {
@@ -924,6 +952,11 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     // otherwise the background FC26.exe will load them and crash!
     emit_progress(85.0, "Waiting for background activation to finish...");
     for _ in 0..120 { // wait up to 120 seconds
+        // ✅ FIX: Respect cancel flag so user doesn't wait 120s after pressing Cancel
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            crate::logger::log_msg(&game_dir, "Activation cancelled during FC26 background wait.");
+            break;
+        }
         let output = std::process::Command::new("tasklist")
             .args(&["/FI", "IMAGENAME eq FC26.exe"])
             .creation_flags(0x08000000)

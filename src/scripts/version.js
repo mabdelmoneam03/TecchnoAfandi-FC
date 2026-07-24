@@ -139,6 +139,16 @@ async function startActivation() {
   let selection = null;
   try { selection = sessionStorage.getItem('ta_mode'); } catch (e) {}
 
+  // ✅ Guard: validate required state before invoking Rust
+  if (!exeDir || exeDir.trim() === '') {
+    showFailure('Game folder path is missing.\nمسار مجلد اللعبة غير محفوظ — ارجع للصفحة الرئيسية وحدد المجلد مرة أخرى.');
+    return;
+  }
+  if (!selection || selection.trim() === '') {
+    showFailure('Mode not selected.\nالوضع غير محدد — ارجع واختر FMM أو Live Editor.');
+    return;
+  }
+
   setActivating(true);
   document.getElementById('status-text').textContent = "Activating...";
 
