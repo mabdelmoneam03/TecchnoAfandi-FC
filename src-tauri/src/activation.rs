@@ -465,12 +465,6 @@ fn run_hidden(exe_path: &Path, cwd: &Path) -> std::io::Result<std::process::Chil
         .spawn()
 }
 
-fn run_visible(exe_path: &Path, cwd: &Path) -> std::io::Result<std::process::Child> {
-    Command::new(exe_path)
-        .current_dir(cwd)
-        .spawn()
-}
-
 fn check_ticket_files(dir: &Path) -> bool {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -1052,47 +1046,60 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     // Step 9: Re-run FC26.exe — verify activation worked
     emit_progress(92.0, "Launching FC26.exe...");
-    match run_visible(&fc26_path, &game_dir) {
-        Ok(mut child2) => {
-            // Confirm game started
-            let mut started = false;
-            for _ in 0..10 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Ok(None) = child2.try_wait() {
-                    started = true;
-                    break;
-                }
-            }
+    
+    // We use open::that (ShellExecute) to launch the game exactly like a double-click.
+    // This fixes the issue where CreateProcess (Command::new) launches the game as a background process without a window.
+    if let Err(e) = open::that(fc26_path.to_string_lossy().to_string()) {
+        emit_done(false, &format!("Failed to launch FC26.exe: {}", e));
+        return;
+    }
 
-            if started {
-                emit_progress(94.0, "Game re-loaded — verifying Denuvo ticket creation...");
-                // Wait for potential ticket creation or game exit
-                let _ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 94.0).await;
-
-                // After waiting, if FC26 is still running, it's successful!
-                match child2.try_wait() {
-                    Ok(None) => {
-                        // Still running = Success
-                        emit_progress(100.0, "Activation complete");
-                        let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
-                        emit_done(true, "تم التفعيل بنجاح واللعبة تعمل الآن! 🎮\nEA SPORTS FC 26 activated successfully and is running. Enjoy the game!");
-                        // DO NOT kill child2 here! Let the user play the game!
-                    }
-                    Ok(Some(status)) => {
-                        crate::logger::log_msg(&game_dir, &format!("ERROR: FC26.exe exited unexpectedly (code: {:?}) after activator.", status.code()));
-                        emit_done(false, "فشل التفعيل — اللعبة توقفت فجأة بعد التشغيل\nActivation Failed: FC26.exe exited unexpectedly. Try running the tool as Administrator.");
-                    }
-                    Err(e) => {
-                        emit_done(false, &format!("Could not verify if FC26.exe is running: {}", e));
-                    }
-                }
-            } else {
-                emit_done(false, "FC26.exe did not start on re-run");
+    // Confirm game started
+    let mut started = false;
+    for _ in 0..15 { // wait up to 7.5 seconds for the process to appear
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .args(&["/FI", "IMAGENAME eq FC26.exe"])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("FC26.exe") {
+                started = true;
+                break;
             }
         }
-        Err(e) => {
-            emit_done(false, &format!("Failed to re-run FC26.exe: {}", e));
+    }
+
+    if started {
+        emit_progress(94.0, "Game re-loaded — verifying Denuvo ticket creation...");
+        // Wait for potential ticket creation or game exit
+        let _ticket_found = watch_for_ticket(&game_dir, 10, &cancel, &pause, &app, 94.0).await;
+
+        // Check if FC26 is still running
+        let mut still_running = false;
+        if let Ok(output) = std::process::Command::new("tasklist")
+            .args(&["/FI", "IMAGENAME eq FC26.exe"])
+            .creation_flags(0x08000000)
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("FC26.exe") {
+                still_running = true;
+            }
         }
+
+        if still_running {
+            // Still running = Success
+            emit_progress(100.0, "Activation complete");
+            let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
+            emit_done(true, "تم التفعيل بنجاح واللعبة تعمل الآن! 🎮\nEA SPORTS FC 26 activated successfully and is running. Enjoy the game!");
+        } else {
+            crate::logger::log_msg(&game_dir, "ERROR: FC26.exe exited unexpectedly after activator.");
+            emit_done(false, "فشل التفعيل — اللعبة توقفت فجأة بعد التشغيل\nActivation Failed: FC26.exe exited unexpectedly. Try running the tool as Administrator.");
+        }
+    } else {
+        emit_done(false, "FC26.exe did not start on re-run");
     }
 }
 
