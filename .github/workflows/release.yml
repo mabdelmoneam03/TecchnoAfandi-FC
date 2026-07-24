@@ -34,13 +34,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # ✅ Write the signing key to a temp file to avoid newline issues
+      - name: Prepare signing key
+        shell: pwsh
+        run: |
+          $keyB64 = "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          $keyB64 = $keyB64.Trim()
+          $keyBytes = [System.Convert]::FromBase64String($keyB64)
+          $keyPath = Join-Path $env:RUNNER_TEMP "tauri_signing.key"
+          [System.IO.File]::WriteAllBytes($keyPath, $keyBytes)
+          echo "TAURI_KEY_PATH=$keyPath" >> $env:GITHUB_ENV
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          # ✅ Password moved to GitHub Secret — go to Settings → Secrets → TAURI_KEY_PASSWORD
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_KEY_PATH }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'TechnoAfandi - FC ${{ github.ref_name }}'
