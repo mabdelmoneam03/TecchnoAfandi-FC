@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use serde::Serialize;
 use tauri::{Manager, Emitter};
-use std::collections::VecDeque;
+
 
 /// Shared cancellation flag
 struct CancelFlag(Arc<AtomicBool>);

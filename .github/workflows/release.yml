@@ -34,16 +34,16 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      # ✅ Write the signing key to a temp file to avoid newline issues
-      - name: Prepare signing key
+      # ✅ Strip newlines from the b64 key and write it as a clean file
+      # Tauri reads the file → sees b64 string → decodes → raw key ✓
+      - name: Prepare signing key file
         shell: pwsh
         run: |
           $keyB64 = "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
-          $keyB64 = $keyB64.Trim()
-          $keyBytes = [System.Convert]::FromBase64String($keyB64)
+          $keyB64 = ($keyB64 -split '\r?\n' | Where-Object { $_ -ne '' }) -join ''
           $keyPath = Join-Path $env:RUNNER_TEMP "tauri_signing.key"
-          [System.IO.File]::WriteAllBytes($keyPath, $keyBytes)
-          echo "TAURI_KEY_PATH=$keyPath" >> $env:GITHUB_ENV
+          [System.IO.File]::WriteAllText($keyPath, $keyB64)
+          "TAURI_KEY_PATH=$keyPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
