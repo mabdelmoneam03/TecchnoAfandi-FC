@@ -1044,13 +1044,21 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         }
     }
 
-    // Step 9: Re-run FC26.exe — verify activation worked
-    emit_progress(92.0, "Launching FC26.exe...");
+    // Step 9: Re-run the game — verify activation worked
+    emit_progress(92.0, "Launching Game...");
     
     // We use open::that (ShellExecute) to launch the game exactly like a double-click.
-    // This fixes the issue where CreateProcess (Command::new) launches the game as a background process without a window.
-    if let Err(e) = open::that(fc26_path.to_string_lossy().to_string()) {
-        emit_done(false, &format!("Failed to launch FC26.exe: {}", e));
+    // We prefer Launcher.exe (Live Editor) if it exists, otherwise FC26.exe.
+    // This fixes the issue where FC26.exe might stay in the background if run directly.
+    let launcher_path = game_dir.join("Launcher.exe");
+    let target_exe = if launcher_path.exists() {
+        launcher_path.clone()
+    } else {
+        fc26_path.clone()
+    };
+
+    if let Err(e) = open::that(target_exe.to_string_lossy().to_string()) {
+        emit_done(false, &format!("Failed to launch game: {}", e));
         return;
     }
 
