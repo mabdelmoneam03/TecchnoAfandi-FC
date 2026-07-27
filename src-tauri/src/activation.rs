@@ -1058,10 +1058,6 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         fc26_path.display(),
         game_dir.display()
     );
-    // Minimize the tool window so the game takes absolute foreground automatically
-    for (_, window) in app.webview_windows() {
-        let _ = window.minimize();
-    }
 
     let launch_result = std::process::Command::new("powershell")
         .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
