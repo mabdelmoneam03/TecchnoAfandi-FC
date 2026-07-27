@@ -451,8 +451,11 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
             if let Some(parent) = out_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            let mut outfile = std::fs::File::create(&out_path).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut outfile).map_err(|e| e.to_string())?;
+            // Explicitly delete the file first to guarantee replacement, ignoring errors if it doesn't exist
+            let _ = std::fs::remove_file(&out_path);
+            
+            let mut outfile = std::fs::File::create(&out_path).map_err(|e| format!("Failed to create {}: {}", out_path.display(), e))?;
+            std::io::copy(&mut entry, &mut outfile).map_err(|e| format!("Failed to write {}: {}", out_path.display(), e))?;
         }
     }
     Ok(())
@@ -1044,27 +1047,35 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         }
     }
 
-    // Step 9: Re-run the game — verify activation worked
-    emit_progress(92.0, "Launching Game...");
+    // Step 9: Re-run FC26.exe — verify activation worked
+    emit_progress(92.0, "Launching FC26.exe...");
     
-    // We use open::that (ShellExecute) to launch the game exactly like a double-click.
-    // We prefer Launcher.exe (Live Editor) if it exists, otherwise FC26.exe.
-    // This fixes the issue where FC26.exe might stay in the background if run directly.
-    let launcher_path = game_dir.join("Launcher.exe");
-    let target_exe = if launcher_path.exists() {
-        launcher_path.clone()
-    } else {
-        fc26_path.clone()
-    };
+    // We use PowerShell's Start-Process to launch the game using ShellExecute
+    // WITH the correct WorkingDirectory. This fixes both the background-process issue
+    // (since it uses ShellExecute) AND the BootLoadError (since it sets CWD).
+    let ps_cmd = format!(
+        "Start-Process -FilePath '{}' -WorkingDirectory '{}'",
+        fc26_path.display(),
+        game_dir.display()
+    );
+    // Minimize the tool window so the game takes absolute foreground automatically
+    for (_, window) in app.webview_windows() {
+        let _ = window.minimize();
+    }
 
-    if let Err(e) = open::that(target_exe.to_string_lossy().to_string()) {
-        emit_done(false, &format!("Failed to launch game: {}", e));
+    let launch_result = std::process::Command::new("powershell")
+        .args(&["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_cmd])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW for powershell itself
+        .spawn();
+
+    if let Err(e) = launch_result {
+        emit_done(false, &format!("Failed to launch FC26.exe: {}", e));
         return;
     }
 
     // Confirm game started
     let mut started = false;
-    for _ in 0..15 { // wait up to 7.5 seconds for the process to appear
+    for _ in 0..60 { // wait up to 30 seconds for the process to appear (EA App can be slow)
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         if let Ok(output) = std::process::Command::new("tasklist")
             .args(&["/FI", "IMAGENAME eq FC26.exe"])

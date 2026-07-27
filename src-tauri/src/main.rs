@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
+#![allow(clippy::all)]
 use std::os::windows::process::CommandExt;
 
 mod activation;
