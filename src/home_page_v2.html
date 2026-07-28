@@ -494,28 +494,32 @@
     <div class="corner bl"></div><div class="corner br"></div>
 
     <div class="w-header">
-      <h2 style="margin:0; font-size: 20px; font-weight: 700; color: #fff;">
-        <span class="bi">هل تريد حفظ هذا المسار؟</span>
-        <span class="en">Save this path?</span>
+      <h2 style="margin:0; font-size: 20px; font-weight: 700; color: #fff; text-align: center; line-height: 1.4;">
+        <div class="bi" dir="rtl">هل تريد حفظ هذا المسار؟</div>
+        <div class="en" dir="ltr" style="font-size: 16px; color: #a1a1aa;">Save this path?</div>
       </h2>
     </div>
 
     <div class="w-content" style="text-align: center; line-height: 1.6; color: #a1a1aa; padding: 0 20px;">
-      <p class="bi" style="font-size: 14px; margin-bottom: 5px;">تم العثور على مجلد اللعبة في المسار التالي:</p>
-      <p class="en" style="font-size: 13px; margin-bottom: 5px;">Game folder found at:</p>
-      <p id="path-confirm-text" style="font-size: 12px; color: #5EEAD4; background: rgba(94, 234, 212, 0.1); padding: 8px; border-radius: 4px; word-break: break-all; margin: 10px 0;"></p>
-      <p class="bi" style="font-size: 13px; margin-top: 10px;">(موصى به لكي تعمل الأداة بشكل صحيح)</p>
-      <p class="en" style="font-size: 12px;">(Recommended for the tool to work properly)</p>
+      <div class="bi" style="font-size: 14px; margin-bottom: 5px;" dir="rtl">تم العثور على مجلد اللعبة في المسار التالي:</div>
+      <div class="en" style="font-size: 13px; margin-bottom: 5px;" dir="ltr">Game folder found at:</div>
+      <div id="path-confirm-text" style="font-size: 12px; color: #5EEAD4; background: rgba(94, 234, 212, 0.1); padding: 8px; border-radius: 4px; word-break: break-all; margin: 10px 0; direction: ltr;"></div>
+      <div class="bi" style="font-size: 13px; margin-top: 10px;" dir="rtl">(موصى به لكي تعمل الأداة بشكل صحيح)</div>
+      <div class="en" style="font-size: 12px;" dir="ltr">(Recommended for the tool to work properly)</div>
     </div>
 
     <div class="w-divider"></div>
 
     <div class="w-actions" style="margin-top: 20px; display: flex; gap: 10px;">
-        <button class="btn-secondary" style="flex: 1; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; cursor: pointer;" onclick="closeModal('path-confirm-modal')">
-          <span class="bi">إلغاء</span> / <span class="en">Cancel</span>
+        <button class="btn-secondary" style="flex: 1; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1); padding: 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: center; align-items: center;" onclick="closeModal('path-confirm-modal')">
+          <span class="en" dir="ltr">Cancel</span>
+          <span style="opacity: 0.5; margin: 0 6px;">|</span>
+          <span class="bi" dir="rtl">إلغاء</span>
         </button>
-        <button class="btn-teal" style="flex: 1; background: #0D9488; color: #000; border: none; padding: 10px; border-radius: 6px; font-weight: 600; cursor: pointer;" onclick="window.confirmSavePath()">
-          <span class="bi">حفظ</span> / <span class="en">Save</span>
+        <button class="btn-teal" style="flex: 1; background: #0D9488; color: #000; border: none; padding: 10px; border-radius: 6px; font-weight: 600; cursor: pointer; display: flex; justify-content: center; align-items: center;" onclick="window.confirmSavePath()">
+          <span class="en" dir="ltr">Save</span>
+          <span style="opacity: 0.5; margin: 0 6px; color: #000;">|</span>
+          <span class="bi" dir="rtl">حفظ</span>
         </button>
     </div>
   </div>
@@ -541,22 +545,24 @@
     <div class="corner bl"></div><div class="corner br"></div>
 
     <div class="w-header">
-      <h2 style="margin:0; font-size: 22px; font-weight: 700; color: #5EEAD4;">
-        <span class="bi">تم الحفظ!</span>
-        <span class="en">Saved!</span>
+      <h2 style="margin:0; font-size: 22px; font-weight: 700; color: #5EEAD4; text-align: center; line-height: 1.4;">
+        <div class="bi" dir="rtl">تم الحفظ!</div>
+        <div class="en" dir="ltr" style="font-size: 18px;">Saved!</div>
       </h2>
     </div>
 
     <div class="w-content" style="text-align: center; line-height: 1.6; color: #a1a1aa; padding: 0 20px;">
-      <p class="bi" style="font-size: 16px;">تم حفظ المسار بنجاح! الأداة جاهزة الآن.</p>
-      <p class="en" style="font-size: 14px;">Game path saved successfully! Tool is ready.</p>
+      <div class="bi" style="font-size: 16px; margin-bottom: 5px;" dir="rtl">تم حفظ المسار بنجاح! الأداة جاهزة الآن.</div>
+      <div class="en" style="font-size: 14px;" dir="ltr">Game path saved successfully! Tool is ready.</div>
     </div>
 
     <div class="w-divider"></div>
 
     <div class="w-actions" style="margin-top: 25px;">
-        <button class="btn-teal" style="width: 100%; justify-content: center; background: #5EEAD4; color: #000; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer;" onclick="closeModal('path-success-modal')">
-          <span class="bi">حسنًا</span> / <span class="en">OK</span>
+        <button class="btn-teal" style="width: 100%; display: flex; justify-content: center; align-items: center; background: #5EEAD4; color: #000; border: none; padding: 12px; border-radius: 6px; font-weight: 600; cursor: pointer;" onclick="closeModal('path-success-modal')">
+          <span class="en" dir="ltr">OK</span>
+          <span style="opacity: 0.5; margin: 0 6px; color: #000;">|</span>
+          <span class="bi" dir="rtl">حسنًا</span>
         </button>
     </div>
   </div>
