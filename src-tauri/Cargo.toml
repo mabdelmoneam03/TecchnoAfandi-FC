@@ -2,11 +2,7 @@
 
 [package]
 name = "TechnoAfandi-FC"
-<<<<<<< HEAD
-version = "1.1.15"
-=======
-version = "1.1.16"
->>>>>>> 424c129 (feat: Zero-merge downloader, graceful close, Tauri store path saving, and native updater)
+version = "1.1.17"
 description = "A Tauri App"
 edition = "2021"
 
