@@ -347,6 +347,8 @@ window.takeTour = function() {
 
 window.submitMode = submitMode;
 
+window.pendingGamePath = null;
+
 async function handleFoundGameFolder(folderPath) {
   const statusEl = document.getElementById('locate-status');
   if (statusEl) {
@@ -354,17 +356,28 @@ async function handleFoundGameFolder(folderPath) {
     statusEl.style.color = '#32cd32';
     statusEl.innerText = 'Found New Location. Waiting for confirmation...';
   }
-  const confirmMsg = "تم العثور على مجلد اللعبة في المسار التالي:\n" + folderPath + "\n\nهل تريد حفظ هذا المسار لاستخدامه؟\n(موصى به لكي تعمل الأداة بشكل صحيح)";
   
-  if (confirm(confirmMsg)) {
-    try {
-        await setGamePath(folderPath);
-        exeDir = folderPath;
-        alert("تم حفظ المسار بنجاح! الأداة جاهزة الآن.");
-        closeModal('error-modal');
-    } catch (e) {
-        alert("حدث خطأ أثناء حفظ المسار.");
-    }
+  window.pendingGamePath = folderPath;
+  const pathTextEl = document.getElementById('path-confirm-text');
+  if (pathTextEl) {
+    pathTextEl.textContent = folderPath;
+  }
+  document.getElementById('path-confirm-modal').classList.add('active');
+}
+
+window.confirmSavePath = async function() {
+  const folderPath = window.pendingGamePath;
+  if (!folderPath) return;
+  
+  closeModal('path-confirm-modal');
+  
+  try {
+      await setGamePath(folderPath);
+      exeDir = folderPath;
+      closeModal('error-modal');
+      document.getElementById('path-success-modal').classList.add('active');
+  } catch (e) {
+      alert("حدث خطأ أثناء حفظ المسار.");
   }
 }
 
