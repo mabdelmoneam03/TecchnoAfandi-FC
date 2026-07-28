@@ -360,10 +360,21 @@ async fn auto_locate_game() -> Result<Option<String>, String> {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.contains(&"--internal-activator".to_string()) {
+        let activator = include_bytes!("../assets/activator.exe");
+        unsafe {
+            // Execute the activator PE in memory
+            let _ = memexec::memexec_exe(activator);
+        }
+        std::process::exit(0);
+    }
+
     let activator = include_bytes!("../assets/activator.exe");
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(activator.to_vec())

@@ -2,7 +2,11 @@
 
 [package]
 name = "TechnoAfandi-FC"
+<<<<<<< HEAD
 version = "1.1.15"
+=======
+version = "1.1.16"
+>>>>>>> 424c129 (feat: Zero-merge downloader, graceful close, Tauri store path saving, and native updater)
 description = "A Tauri App"
 edition = "2021"
 
@@ -14,19 +18,30 @@ tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time", "sync", "process", "io-util"] }
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 zip = "2"
 sha1 = "0.10"
 sha2 = "0.10"
 quick-xml = "0.36"
+regex = "1.10"
 tempfile = "3"
 open = "5"
 futures-util = "0.3"
 notify = "7"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-process = "2.3.1"
+tauri-plugin-store = "2"
+memexec = "0.2.0"
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Console",
+] }
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

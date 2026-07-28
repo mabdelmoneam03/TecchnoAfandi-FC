@@ -353,7 +353,7 @@ const HOME_STEPS = [
       nextLabel: 'Next Page →',
       onNext: () => {
         modalOverlay.classList.remove('active');
-        try { sessionStorage.setItem('ta_mode', 'FMM'); sessionStorage.setItem('ta_exe_dir', '.'); } catch(_) {}
+        try { sessionStorage.setItem('ta_mode', 'FMM'); } catch(_) {}
         setStep(11); // jump to version page steps
         window.location.href = 'version_page_v2.html';
       },

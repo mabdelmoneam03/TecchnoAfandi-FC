@@ -2,10 +2,10 @@ use reqwest::Client;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tauri::AppHandle;
 use tauri::Emitter;
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 #[derive(Clone, Serialize)]
 pub struct ProgressPayload {
@@ -25,12 +25,37 @@ pub fn format_time(secs: u64) -> String {
     }
 }
 
+#[derive(Serialize, Deserialize, Clone, Default)]
+struct DownloadState {
+    parts_downloaded: Vec<u64>,
+}
+
+async fn save_state(state_path: &Path, state: &DownloadState) {
+    if let Ok(json) = serde_json::to_string(state) {
+        let _ = tokio::fs::write(state_path, json).await;
+    }
+}
+
+async fn load_state(state_path: &Path, num_parts: usize) -> DownloadState {
+    if let Ok(content) = tokio::fs::read_to_string(state_path).await {
+        if let Ok(state) = serde_json::from_str::<DownloadState>(&content) {
+            if state.parts_downloaded.len() == num_parts {
+                return state;
+            }
+        }
+    }
+    DownloadState { parts_downloaded: vec![0; num_parts] }
+}
+
 async fn download_chunk(
     client: Client,
     url: String,
-    start_byte: u64,
+    part_index: usize,
+    base_start_byte: u64,
     end_byte: u64,
     dest_path: PathBuf,
+    state_path: PathBuf,
+    state: Arc<tokio::sync::Mutex<DownloadState>>,
     cancel: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     dl_counter: Arc<AtomicU64>,
@@ -38,8 +63,11 @@ async fn download_chunk(
     let mut retry_count = 0;
     
     loop {
-        let current_size = tokio::fs::metadata(&dest_path).await.map(|m| m.len()).unwrap_or(0);
-        let current_start = start_byte + current_size;
+        let current_downloaded = {
+            let s = state.lock().await;
+            s.parts_downloaded[part_index]
+        };
+        let current_start = base_start_byte + current_downloaded;
         
         if current_start > end_byte {
             return Ok(()); // Done
@@ -64,14 +92,20 @@ async fn download_chunk(
             }
         };
 
-        let file_res = tokio::fs::OpenOptions::new().create(true).append(true).open(&dest_path).await;
+        let file_res = tokio::fs::OpenOptions::new().write(true).open(&dest_path).await;
         if file_res.is_err() {
             tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
             continue;
         }
         let mut file = file_res.unwrap();
+        if let Err(e) = file.seek(std::io::SeekFrom::Start(current_start)).await {
+            return Err(format!("Failed to seek: {}", e));
+        }
 
         let mut success = true;
+        let mut local_downloaded = current_downloaded;
+        let mut last_save = std::time::Instant::now();
+
         while let Some(chunk_res) = resp.chunk().await.transpose() {
             if cancel.load(Ordering::Relaxed) || pause.load(Ordering::Relaxed) {
                 return Err("Stopped".to_string());
@@ -83,6 +117,14 @@ async fn download_chunk(
                         break;
                     }
                     dl_counter.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    local_downloaded += chunk.len() as u64;
+                    
+                    if last_save.elapsed().as_secs() >= 2 {
+                        let mut s = state.lock().await;
+                        s.parts_downloaded[part_index] = local_downloaded;
+                        save_state(&state_path, &s).await;
+                        last_save = std::time::Instant::now();
+                    }
                 },
                 Err(_) => {
                     success = false;
@@ -91,6 +133,13 @@ async fn download_chunk(
             }
         }
         
+        // Final save for this attempt
+        {
+            let mut s = state.lock().await;
+            s.parts_downloaded[part_index] = local_downloaded;
+            save_state(&state_path, &s).await;
+        }
+
         if success {
             return Ok(());
         } else {
@@ -182,31 +231,29 @@ pub async fn download_file_stream_reqwest(
 
     let total = total_size.unwrap();
     let chunk_size = total / num_parts as u64;
-    let part_temp = std::env::temp_dir();
+    let state_path = dest.with_extension("state");
 
-    let total_downloaded = Arc::new(AtomicU64::new(0));
-    let mut initial_total_downloaded: u64 = 0;
+    // Pre-allocate the file using set_len to avoid merging later
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open(dest)
+        .map_err(|e| (format!("Failed to create file: {}", e), accumulated_time))?;
+    
+    file.set_len(total).map_err(|e| (format!("Failed to allocate file: {}", e), accumulated_time))?;
+
+    let download_state = load_state(&state_path, num_parts).await;
+    let state_arc = Arc::new(tokio::sync::Mutex::new(download_state.clone()));
+
+    let mut initial_total_downloaded: u64 = download_state.parts_downloaded.iter().sum();
+    let total_downloaded = Arc::new(AtomicU64::new(initial_total_downloaded));
     
     let error_msg = Arc::new(tokio::sync::Mutex::new(None));
     let mut tasks = Vec::new();
 
     for i in 0..num_parts {
-        let file_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let part_path = part_temp.join(format!(".dl_part_{}_{}", file_name, i));
-        
-        let current_size = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
-        initial_total_downloaded += current_size;
-        
         let base_start_byte = i as u64 * chunk_size;
         let end_byte = if i == num_parts - 1 { total - 1 } else { (i as u64 + 1) * chunk_size - 1 };
-
-        if base_start_byte + current_size > end_byte {
-            total_downloaded.fetch_add(current_size, Ordering::Relaxed);
-            continue;
-        }
-
-        total_downloaded.fetch_add(current_size, Ordering::Relaxed);
-        let target_file = part_path.clone();
 
         let url_clone = url.to_string();
         let client_clone = client.clone();
@@ -214,9 +261,12 @@ pub async fn download_file_stream_reqwest(
         let pause_clone = pause.clone();
         let dl_counter = total_downloaded.clone();
         let err_clone = error_msg.clone();
+        let dest_clone = dest.to_path_buf();
+        let state_path_clone = state_path.clone();
+        let state_clone = state_arc.clone();
         
         let task = tokio::spawn(async move {
-            if let Err(e) = download_chunk(client_clone, url_clone, base_start_byte, end_byte, target_file, cancel_clone, pause_clone, dl_counter).await {
+            if let Err(e) = download_chunk(client_clone, url_clone, i, base_start_byte, end_byte, dest_clone, state_path_clone, state_clone, cancel_clone, pause_clone, dl_counter).await {
                 if e != "Stopped" {
                     let mut lock = err_clone.lock().await;
                     if lock.is_none() { *lock = Some(e); }
@@ -224,7 +274,7 @@ pub async fn download_file_stream_reqwest(
             }
         });
 
-        tasks.push((task, part_path));
+        tasks.push(task);
     }
 
     let _ = app.emit("activation-progress", ProgressPayload {
@@ -238,10 +288,11 @@ pub async fn download_file_stream_reqwest(
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         if pause.load(Ordering::Relaxed) {
-            for (task, _) in &tasks { task.abort(); }
+            for task in &tasks { task.abort(); }
             while pause.load(Ordering::Relaxed) {
                 if cancel.load(Ordering::Relaxed) {
-                    for (_, part_path) in &tasks { let _ = tokio::fs::remove_file(part_path).await; }
+                    let _ = tokio::fs::remove_file(dest).await;
+                    let _ = tokio::fs::remove_file(&state_path).await;
                     let current_elapsed = start_time.elapsed().as_secs();
                     return Err(("Cancelled".to_string(), accumulated_time + current_elapsed));
                 }
@@ -252,19 +303,19 @@ pub async fn download_file_stream_reqwest(
         }
 
         if cancel.load(Ordering::Relaxed) {
-            for (task, part_path) in &tasks {
+            for task in &tasks {
                 task.abort();
-                let _ = tokio::fs::remove_file(part_path).await;
             }
+            let _ = tokio::fs::remove_file(dest).await;
+            let _ = tokio::fs::remove_file(&state_path).await;
             let current_elapsed = start_time.elapsed().as_secs();
             return Err(("Cancelled".to_string(), accumulated_time + current_elapsed));
         }
 
         let err_lock = error_msg.lock().await.clone();
         if let Some(err) = err_lock {
-            for (task, _) in &tasks {
+            for task in &tasks {
                 task.abort();
-                // We purposefully do NOT delete part_path so it can resume on Retry
             }
             let current_elapsed = start_time.elapsed().as_secs();
             return Err((format!("Retry|{}", err), accumulated_time + current_elapsed));
@@ -286,7 +337,7 @@ pub async fn download_file_stream_reqwest(
         });
 
         let mut all_done = true;
-        for (t, _) in &tasks {
+        for t in &tasks {
             if !t.is_finished() {
                 all_done = false;
                 break;
@@ -298,23 +349,7 @@ pub async fn download_file_stream_reqwest(
         }
     }
 
-    let current_elapsed = start_time.elapsed().as_secs();
-    
-    let _ = app.emit("activation-progress", ProgressPayload {
-        percent: progress_end - 0.1,
-        label: format!("{} · Merging...", label),
-    });
-
-    let mut output = std::fs::File::create(dest).map_err(|e| (e.to_string(), accumulated_time + current_elapsed))?;
-    for i in 0..num_parts {
-        let file_name = dest.file_name().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let part_path = part_temp.join(format!(".dl_part_{}_{}", file_name, i));
-        if part_path.exists() {
-            let mut part = std::fs::File::open(&part_path).map_err(|e| (e.to_string(), accumulated_time + current_elapsed))?;
-            std::io::copy(&mut part, &mut output).map_err(|e| (e.to_string(), accumulated_time + current_elapsed))?;
-            let _ = std::fs::remove_file(part_path);
-        }
-    }
+    let _ = tokio::fs::remove_file(&state_path).await;
 
     let _ = app.emit("activation-progress", ProgressPayload {
         percent: progress_end,
