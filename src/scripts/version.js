@@ -1,4 +1,5 @@
 import { resumeTourIfActive } from './tour.js';
+import { getGamePath } from './store.js';
 
 // ===== Tauri v2 API helpers =====
 const TAURI = window.__TAURI__;
@@ -135,7 +136,7 @@ function renderMode() {
 
 async function startActivation() {
   let exeDir = null;
-  try { exeDir = sessionStorage.getItem('ta_exe_dir'); } catch (e) {}
+  try { exeDir = await getGamePath(); } catch (e) {}
   let selection = null;
   try { selection = sessionStorage.getItem('ta_mode'); } catch (e) {}
 
@@ -303,10 +304,9 @@ window.onload = async () => {
   // Fetch game version
   if (invoke) {
     let exeDir = null;
-    try { exeDir = sessionStorage.getItem('ta_exe_dir'); } catch (e) {}
-    if (!exeDir) {
+    try { exeDir = await getGamePath(); } catch (e) {}
+    if (!exeDir || exeDir === "") {
       try { exeDir = await tauriInvoke('get_exe_dir'); } catch (e) { console.error(e); }
-      if (exeDir) { try { sessionStorage.setItem('ta_exe_dir', exeDir); } catch (e) {} }
     }
 
     if (exeDir) {

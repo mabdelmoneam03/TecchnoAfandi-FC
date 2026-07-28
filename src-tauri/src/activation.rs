@@ -4,7 +4,6 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 use tauri::AppHandle;
 use tauri::Emitter;
-use tauri::Manager;
 use serde::Serialize;
 
 // GitHub hosting strategy:
@@ -51,6 +50,8 @@ pub fn parse_game_version(xml: &str) -> Option<String> {
     use quick_xml::events::Event;
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
+    
+    // 1. Try standard XML parsing first
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Empty(e)) => {
@@ -62,12 +63,20 @@ pub fn parse_game_version(xml: &str) -> Option<String> {
                     }
                 }
             }
-            Ok(Event::Eof) => break,
-            Err(_) => break,
-            _ => {}
+            Ok(Event::Eof) | Err(_) => break,
+            _ => (),
         }
         buf.clear();
     }
+    
+    // 2. Fallback to Regex if XML parsing failed (EA sometimes creates malformed XMLs)
+    let re = regex::Regex::new(r#"<gameVersion\s+[^>]*version\s*=\s*"([^"]+)""#).ok()?;
+    if let Some(captures) = re.captures(xml) {
+        if let Some(m) = captures.get(1) {
+            return Some(m.as_str().to_string());
+        }
+    }
+    
     None
 }
 
@@ -461,8 +470,9 @@ fn extract_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_hidden(exe_path: &Path, cwd: &Path) -> std::io::Result<std::process::Child> {
+fn run_hidden(exe_path: &Path, cwd: &Path, args: &[&str]) -> std::io::Result<std::process::Child> {
     Command::new(exe_path)
+        .args(args)
         .current_dir(cwd)
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .spawn()
@@ -675,7 +685,86 @@ fn generate_anadius_cfg(game_dir: &Path, version: &str, selection: &str) -> Resu
     std::fs::write(&cfg_path, cfg_content).map_err(|e| e.to_string())
 }
 
-pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String, client: reqwest::Client, cancel: std::sync::Arc<std::sync::atomic::AtomicBool>, pause: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+// Soft-Close implementation below
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tokio::time::Duration;
+
+#[cfg(windows)]
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+#[cfg(windows)]
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_TERMINATE};
+#[cfg(windows)]
+use windows::Win32::System::ProcessStatus::K32EnumProcessModules;
+#[cfg(windows)]
+use windows::Win32::System::ProcessStatus::K32GetModuleBaseNameW;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE};
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_windows_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let target_pid = lparam.0 as u32;
+    let mut window_pid = 0;
+    GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
+    
+    if window_pid == target_pid {
+        let _ = PostMessageW(hwnd, WM_CLOSE, windows::Win32::Foundation::WPARAM(0), windows::Win32::Foundation::LPARAM(0));
+    }
+    BOOL(1)
+}
+
+fn close_process_gracefully(process_name: &str) {
+    #[cfg(windows)]
+    unsafe {
+        let mut pids = [0u32; 1024];
+        let mut bytes_returned = 0;
+        
+        let _ = windows::Win32::System::ProcessStatus::K32EnumProcesses(
+            pids.as_mut_ptr(),
+            std::mem::size_of_val(&pids) as u32,
+            &mut bytes_returned,
+        );
+        if bytes_returned > 0 {
+            let count = bytes_returned as usize / std::mem::size_of::<u32>();
+            for &pid in &pids[..count] {
+                if pid == 0 { continue; }
+                
+                if let Ok(h_process) = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE, false, pid) {
+                    let mut h_mod = windows::Win32::Foundation::HMODULE::default();
+                    let mut cb_needed = 0;
+                    
+                    let _ = K32EnumProcessModules(h_process, &mut h_mod as *mut _, std::mem::size_of_val(&h_mod) as u32, &mut cb_needed);
+                    if cb_needed > 0 {
+                        let mut name_buf = [0u16; 256];
+                        let len = K32GetModuleBaseNameW(h_process, h_mod, &mut name_buf);
+                        if len > 0 {
+                            let name = String::from_utf16_lossy(&name_buf[..len as usize]);
+                            if name.eq_ignore_ascii_case(process_name) {
+                                // Found the process, send WM_CLOSE to all its windows
+                                let _ = EnumWindows(Some(enum_windows_proc), LPARAM(pid as isize));
+                                
+                                let h_process_val = h_process.0 as usize;
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_secs(3));
+                                    let h = windows::Win32::Foundation::HANDLE(h_process_val as *mut core::ffi::c_void);
+                                    let _ = windows::Win32::System::Threading::TerminateProcess(h, 1);
+                                });
+                            }
+                        }
+                    }
+                    let _ = windows::Win32::Foundation::CloseHandle(h_process);
+                }
+            }
+        }
+    }
+    
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("pkill").arg("-f").arg(process_name).status();
+    }
+}
+
+pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String, client: reqwest::Client, cancel: Arc<AtomicBool>, pause: Arc<AtomicBool>) {
     let _ = std::fs::remove_file(game_dir.join("TechnoAfandi.log"));
     crate::logger::log_msg(&game_dir, &format!("--- NEW ACTIVATION STARTED: {} ---", selection));
     let app_progress = app.clone();
@@ -828,7 +917,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     // 2. Confirm it's running (process stays alive = game loaded)
     // 3. Watch for Denuvo ticket for 3 seconds
     emit_progress(58.0, "Running FC26.exe...");
-    let fc26_child = run_hidden(&fc26_path, &game_dir);
+    let fc26_child = run_hidden(&fc26_path, &game_dir, &[]);
     match fc26_child {
         Ok(mut child) => {
             // Confirm the game process started and is still running
@@ -908,27 +997,24 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
         }
     }
 
-    // Step 8: Run bundled activator.exe — WAIT for it to finish
-    let activator_bytes = app.state::<Vec<u8>>();
-    
-    // ⚠️ CRITICAL FIX: The activator MUST be in the game directory to find FC26.exe!
-    let activator_path = game_dir.join("TA_Activator.exe");
-
-    if let Err(e) = std::fs::write(&activator_path, &*activator_bytes) {
-        emit_done(false, &format!("Failed to write activator.exe to game folder: {}", e));
-        return;
-    }
+    // Step 8: Run in-memory activator.exe — WAIT for it to finish
+    // We launch a child instance of ourselves with `--internal-activator`
+    // This allows the activator to run purely in memory without extracting to disk!
+    let activator_path = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            emit_done(false, &format!("Failed to get current executable path: {}", e));
+            return;
+        }
+    };
 
     emit_progress(70.0, "Preparing environment for activator...");
     // ⚠️ Force kill FC26.exe and Live Editor processes to release file locks on DLLs
     let processes_to_kill = ["FC26.exe", "LiveEditor.exe", "FCLiveEditor.exe", "Launcher.exe", "EAAC.exe"];
     for proc in &processes_to_kill {
-        let _ = std::process::Command::new("taskkill")
-            .args(&["/F", "/IM", proc, "/T"])
-            .creation_flags(0x08000000)
-            .status();
+        close_process_gracefully(proc);
     }
-    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(3500)).await;
 
     // Hide DLLs that might be injected by Live Editor/FMM and crash the activator
     // NOTE: wininet.dll intentionally excluded — it may be a required proxy DLL for the activation fix itself
@@ -944,7 +1030,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
     }
 
     emit_progress(72.0, "Running activator.exe...");
-    let mut activator_child = match run_hidden(&activator_path, &game_dir) {
+    let mut activator_child = match run_hidden(&activator_path, &game_dir, &["--internal-activator"]) {
         Ok(c) => c,
         Err(e) => {
             // Restore DLLs on error
@@ -957,8 +1043,7 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
                     }
                 }
             }
-            let _ = std::fs::remove_file(&activator_path);
-            emit_done(false, &format!("Failed to run activator.exe: {}", e));
+            emit_done(false, &format!("Failed to run in-memory activator: {}", e));
             return;
         }
     };
@@ -1022,15 +1107,12 @@ pub async fn run_activation(app: AppHandle, game_dir: PathBuf, selection: String
 
     if exit_code.is_none() {
         let _ = activator_child.kill();
-        let _ = std::fs::remove_file(&activator_path);
         emit_done(false, "Activator did not complete within 5 minutes or was cancelled.");
         return;
     } else if !activator_success {
-        let _ = std::fs::remove_file(&activator_path);
         emit_done(false, &format!("Activator failed (exit code: {:?})", exit_code));
         return;
     }
-    let _ = std::fs::remove_file(&activator_path);
     emit_progress(90.0, "Activator finished");
 
     // ✅ FIX: Give the OS time to fully release file handles before re-running FC26.exe
@@ -1172,33 +1254,17 @@ pub async fn portable_update(app: tauri::AppHandle, version: String) -> Result<(
         "label": "Installing update... Restarting app"
     })).unwrap_or(());
     
-    // Create batch script to replace the exe
-    let bat_path = parent.join("update_ta.bat");
-    let current_exe_name = current_exe.file_name().unwrap().to_string_lossy();
-    let new_exe_name = new_exe.file_name().unwrap().to_string_lossy();
+    // Rename current exe to .old
+    let old_exe = current_exe.with_extension("exe.old");
+    let _ = std::fs::remove_file(&old_exe); // Remove if exists
+    std::fs::rename(&current_exe, &old_exe).map_err(|e| format!("Failed to rename current executable: {}", e))?;
     
-    // CRITICAL: timeout command fails in CREATE_NO_WINDOW. Use ping for delay!
-    let bat_content = format!(
-        "@echo off\r\n\
-         ping 127.0.0.1 -n 4 > NUL\r\n\
-         del \"{}\"\r\n\
-         ren \"{}\" \"{}\"\r\n\
-         start \"\" \"{}\"\r\n\
-         del \"%~f0\"\r\n",
-        current_exe_name, new_exe_name, current_exe_name, current_exe_name
-    );
+    // Rename new exe to current exe
+    std::fs::rename(&new_exe, &current_exe).map_err(|e| format!("Failed to move new executable: {}", e))?;
     
-    std::fs::write(&bat_path, bat_content).map_err(|e| e.to_string())?;
+    // Start new exe
+    std::process::Command::new(&current_exe).spawn().map_err(|e| e.to_string())?;
     
-    // Run batch script hidden
-    std::process::Command::new("cmd")
-        .arg("/C")
-        .arg(&bat_path)
-        .current_dir(parent)
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
-        .map_err(|e| e.to_string())?;
-        
     // Exit current process cleanly
     std::process::exit(0);
 }

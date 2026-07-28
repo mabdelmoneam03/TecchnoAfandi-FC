@@ -1,4 +1,5 @@
 import { startTour, resumeTourIfActive } from './tour.js';
+import { getGamePath, setGamePath } from './store.js';
 
 // ===== Tauri v2 API helpers =====
 const TAURI = window.__TAURI__;
@@ -284,8 +285,12 @@ window.onload = async () => {
   // Fetch exe dir once
   if (invoke) {
     try {
-      exeDir = await tauriInvoke('get_exe_dir');
-      try { sessionStorage.setItem('ta_exe_dir', exeDir); } catch (e) {}
+      let storedPath = await getGamePath();
+      if (storedPath && storedPath !== "") {
+          exeDir = storedPath;
+      } else {
+          exeDir = await tauriInvoke('get_exe_dir');
+      }
     } catch (e) {
       console.error("Failed to get exe dir:", e);
     }
@@ -349,32 +354,16 @@ async function handleFoundGameFolder(folderPath) {
     statusEl.style.color = '#32cd32';
     statusEl.innerText = 'Found New Location. Waiting for confirmation...';
   }
+  const confirmMsg = "تم العثور على مجلد اللعبة في المسار التالي:\n" + folderPath + "\n\nهل تريد حفظ هذا المسار لاستخدامه؟\n(موصى به لكي تعمل الأداة بشكل صحيح)";
   
-  const confirmMsg = "تم العثور على مجلد اللعبة في المسار التالي:\n" + folderPath + "\n\nهل تريد نقل الأداة إلى هناك وإعادة التشغيل؟\n(موصى به لكي تعمل الأداة بشكل صحيح)";
-  
-  let confirmed = false;
-  try {
-      confirmed = await tauriInvoke('plugin:dialog|ask', { message: confirmMsg, title: 'تأكيد النقل', type: 'info' });
-  } catch (e) {
-      confirmed = confirm(confirmMsg);
-  }
-
-  if (!confirmed) {
-      if (statusEl) statusEl.style.display = 'none';
-      return;
-  }
-  
-  if (statusEl) {
-      statusEl.innerText = 'Relocating...';
-  }
-  
-  const targetExe = folderPath + '\\TechnoAfandi-FC.exe';
-  try {
-    await tauriInvoke('copy_and_relaunch', { targetPath: targetExe });
-  } catch (err) {
-    if (statusEl) {
-      statusEl.style.color = '#FF4D4D';
-      statusEl.innerText = 'Failed to copy executable: ' + err;
+  if (confirm(confirmMsg)) {
+    try {
+        await setGamePath(folderPath);
+        exeDir = folderPath;
+        alert("تم حفظ المسار بنجاح! الأداة جاهزة الآن.");
+        closeModal('error-modal');
+    } catch (e) {
+        alert("حدث خطأ أثناء حفظ المسار.");
     }
   }
 }
